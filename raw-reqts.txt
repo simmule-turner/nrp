@@ -1,0 +1,48 @@
+
+I want to build a news reader pwa (NRP) in JavaScript that is a client to a miniflux instance. This app should be a minimal (2 file PWA) application. The application should be completely functional in an offline sense meaning all articles should be viewable and all cached images.
+
+
+There should be a configuration screen that allows the user to configure the following items:
+MINIFLUX_TOKEN = "<miniflux-token>"
+MINIFLUX_URL = "<url-to-miniflux-instance>"
+MINIFLUX_MAX_ITEMS = retrieve at most this number of items per feed, this is not the max for the application, just this retrieval session.
+
+
+On the configuration screen there should be a mechanism to configure wallabag so items can be saved to it. The wallabag configuration consists of the following items:
+Wallabag Base URL
+Wallabag Client ID
+Wallabag Client Secret
+Wallabag Username
+Wallabag Password
+
+All the above configuration items are stored in plaintext form within local storage.
+
+The cache size should be selectable between 100M and 5GB. If the cache is exhausted the LRU item should be evicted until space is available for the new item. No individual item can be more than a configurable max size, 2 MB is the default.
+
+
+On the configuration screen I should be able to do the following:
+1/ always show images
+2/ cache images all images or as they are read
+3/ change color schemes (background, and foreground)
+4/ determine the startup mode -- a particular feed or the list of feeds
+5/ choose how the index screen is displayed, text only, text & image small, text & image - large
+
+
+There should be an feed list screen that has the list of feeds. This list of feeds should have the feedname, and the number of articles in that feed. There should be a way of sorting by either the feedname or the number of articles in ascending or descending order.
+
+
+There should be a way to select the feed that is to be viewed. Once a feed is selected the UI, the article list, choose unread items, all items, and starred items. Starred items should never be deleted and remain in the repository.
+
+
+On startup the list of feeds should be fetched from the miniflux server. The user can then select the feeds that user is interested. There should be a UI that lists the available feeds that can be selected by the user.
+
+
+For each feed that is selected the app should fetch items and store them in an internal cache for all the assets. When an image is referenced it should be returned from the cache. The original image should not be fetched, unless there was an error storing it in the cache. When a feed is deleted all the items including the cache are released.
+
+The article list can be sorted by date (newest, oldest), or size (min, max).
+
+On the article list screen at most 'x' lines are displayed following by other items. The title, and the 'x'-1 lines are displayed. 'x' is a configuration item.
+
+When viewing an article, selecting the header goes to the original article, selecting an image goes to the equivalent of the [link]. The [link] referenced here is generally included in reddit feeds that have images. Once viewed an item is marked as read. There should be a way of unmarking something as read. The article can be scrolled. There needs to be a mechanism to send the contents to wallabag (title, content, like the way miniflux does).
+
+On the feed list screen the user can pull to refresh the feeds.
