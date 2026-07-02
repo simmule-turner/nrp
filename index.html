@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NRP</title>
+<meta name="theme-color" content="#15171A">
+<link id="manifest-link" rel="manifest">
+<link id="icon-link" rel="icon">
+<style>
+  :root{
+    --bg:#F5F6F3; --fg:#1B1D1F; --accent:#B8752E; --accent-fg:#1B1D1F;
+    --border:rgba(0,0,0,0.14); --muted:rgba(27,29,31,0.58);
+    --raised:rgba(0,0,0,0.035); --danger:#B0402E;
+    --font-ui:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
+    --font-read:Georgia,'Iowan Old Style','Palatino Linotype',serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:var(--font-ui); font-size:14px; line-height:1.5;
+    -webkit-tap-highlight-color:transparent;
+    display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  }
+  button, input, select{ font-family:inherit; font-size:14px; color:inherit; }
+  button{
+    background:var(--raised); border:1px solid var(--border); color:var(--fg);
+    padding:.5em .8em; cursor:pointer; border-radius:2px;
+  }
+  button:active{ transform:translateY(1px); }
+  button.primary{ background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  button.icon{ padding:.4em .55em; }
+  input[type=text],input[type=password],input[type=number],input[type=url],select{
+    width:100%; padding:.5em .6em; background:var(--bg); border:1px solid var(--border);
+    border-radius:2px; color:var(--fg);
+  }
+  input[type=color]{ width:44px; height:32px; border:1px solid var(--border); background:none; padding:0; }
+  label{ display:block; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:.9em 0 .3em; }
+  fieldset{ border:1px solid var(--border); border-radius:3px; margin:1em 0; padding:.8em 1em 1.1em; }
+  legend{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; padding:0 .4em; color:var(--muted); }
+  hr{ border:none; border-top:1px solid var(--border); margin:.9em 0; }
+  .row{ display:flex; gap:.6em; align-items:center; }
+  .row.between{ justify-content:space-between; }
+  .wrap{ flex-wrap:wrap; }
+  .grow{ flex:1; min-width:0; }
+  .hidden{ display:none !important; }
+  .muted{ color:var(--muted); }
+  .mono-num{ font-variant-numeric:tabular-nums; }
+  .topbar{
+    display:flex; align-items:center; gap:.5em; padding:.7em .8em;
+    border-bottom:1px solid var(--border); background:var(--bg); flex:0 0 auto;
+  }
+  .topbar h1{ font-size:14px; margin:0; letter-spacing:.04em; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .screen{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  .pad{ padding:1em; max-width:640px; margin:0 auto; }
+
+  /* badge */
+  .badge{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:2.4em; padding:.15em .4em; background:var(--accent); color:var(--accent-fg);
+    font-family:var(--font-ui); font-weight:700; font-variant-numeric:tabular-nums;
+    border-radius:2px; font-size:12px;
+  }
+
+  /* feed list */
+  #refresh-indicator{ text-align:center; font-size:12px; color:var(--muted); padding:.4em; height:1.6em; }
+  .feed-row{
+    display:flex; align-items:center; gap:.7em; padding:.75em .9em; border-bottom:1px solid var(--border);
+    cursor:pointer;
+  }
+  .feed-row:active{ background:var(--raised); }
+  .feed-row .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .empty{ padding:2.5em 1.4em; text-align:center; color:var(--muted); }
+  .empty .big{ font-size:13px; font-family:var(--font-ui); letter-spacing:.04em; margin-bottom:.5em; }
+
+  /* article list */
+  .tabs{ display:flex; border-bottom:1px solid var(--border); }
+  .tab{ flex:1; text-align:center; padding:.65em 0; background:none; border:none; border-radius:0; border-bottom:2px solid transparent; color:var(--muted); }
+  .tab.active{ color:var(--fg); border-bottom-color:var(--accent); font-weight:600; }
+  .art-row{ display:flex; gap:.7em; padding:.8em .9em; border-bottom:1px solid var(--border); cursor:pointer; }
+  .art-row:active{ background:var(--raised); }
+  .art-row.read{ opacity:.55; }
+  .art-row .thumb{ flex:0 0 auto; width:56px; height:56px; object-fit:cover; border-radius:2px; border:1px solid var(--border); background:var(--raised); }
+  .art-row .thumb.large{ width:96px; height:96px; }
+  .art-row .body{ flex:1; min-width:0; }
+  .art-row .title{ font-family:var(--font-read); font-size:15px; font-weight:700; margin:0 0 .2em; }
+  .art-row .preview{ font-size:12.5px; color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
+  .art-row .meta{ font-size:11px; color:var(--muted); margin-top:.3em; }
+  .art-row .star-dot{ color:var(--accent); margin-right:.3em; }
+
+  /* article view */
+  .art-head{ padding:1em 1.1em .6em; border-bottom:1px solid var(--border); }
+  .art-head h2{ font-family:var(--font-read); font-size:22px; line-height:1.25; margin:0 0 .3em; cursor:pointer; }
+  .art-head .meta{ font-size:12px; color:var(--muted); }
+  .art-enclosure{ width:100%; max-height:280px; object-fit:cover; display:block; cursor:pointer; }
+  .art-content{ font-family:var(--font-read); font-size:16.5px; line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
+  .art-content img{ max-width:100%; height:auto; cursor:pointer; border-radius:2px; }
+  .art-content a{ color:var(--accent); }
+  .art-content pre{ overflow-x:auto; background:var(--raised); padding:.7em; border-radius:2px; }
+
+  /* config */
+  .chk-list{ max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:2px; }
+  .chk-row{ display:flex; align-items:center; gap:.6em; padding:.5em .7em; border-bottom:1px solid var(--border); }
+  .chk-row:last-child{ border-bottom:none; }
+  .chk-row input{ width:auto; }
+  .toast{
+    position:fixed; left:50%; bottom:1.2em; transform:translateX(-50%);
+    background:var(--fg); color:var(--bg); padding:.6em 1em; border-radius:3px;
+    font-size:13px; z-index:50; max-width:88vw; text-align:center;
+    opacity:0; pointer-events:none; transition:opacity .2s ease;
+  }
+  .toast.show{ opacity:1; }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <button id="btn-back" class="icon hidden" aria-label="Back">&#8592;</button>
+    <h1 id="top-title">NRP</h1>
+    <span id="top-actions" class="row" style="gap:.4em;"></span>
+    <button id="btn-config" class="icon" aria-label="Settings">&#9881;</button>
+  </div>
+
+  <!-- ===== CONFIG SCREEN ===== -->
+  <section id="screen-config" class="screen hidden">
+    <div class="pad">
+
+      <fieldset>
+        <legend>Miniflux</legend>
+        <label for="cfg-mf-url">Server URL</label>
+        <input id="cfg-mf-url" type="url" placeholder="https://miniflux.example.com">
+        <label for="cfg-mf-token">API token</label>
+        <input id="cfg-mf-token" type="password" placeholder="Miniflux API token">
+        <label for="cfg-mf-max">Max items per feed / sync</label>
+        <input id="cfg-mf-max" type="number" min="1" step="1" value="50">
+        <div class="row" style="margin-top:.9em;">
+          <button id="btn-manage-feeds" class="grow">Manage feeds&hellip;</button>
+        </div>
+        <div id="feed-picker" class="hidden" style="margin-top:.8em;">
+          <div id="feed-picker-list" class="chk-list"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Wallabag</legend>
+        <label for="cfg-wb-url">Base URL</label>
+        <input id="cfg-wb-url" type="url" placeholder="https://wallabag.example.com">
+        <label for="cfg-wb-client-id">Client ID</label>
+        <input id="cfg-wb-client-id" type="text">
+        <label for="cfg-wb-client-secret">Client secret</label>
+        <input id="cfg-wb-client-secret" type="password">
+        <label for="cfg-wb-username">Username</label>
+        <input id="cfg-wb-username" type="text">
+        <label for="cfg-wb-password">Password</label>
+        <input id="cfg-wb-password" type="password">
+      </fieldset>
+
+      <fieldset>
+        <legend>Images</legend>
+        <div class="row between">
+          <label style="margin:0;">Always show images</label>
+          <input id="cfg-always-images" type="checkbox">
+        </div>
+        <label for="cfg-image-cache-mode">Image caching</label>
+        <select id="cfg-image-cache-mode">
+          <option value="all">Cache all images on sync</option>
+          <option value="on-read">Cache images as read</option>
+        </select>
+      </fieldset>
+
+      <fieldset>
+        <legend>Appearance</legend>
+        <div class="row" style="margin-bottom:.6em;">
+          <button id="preset-light" class="grow">Light preset</button>
+          <button id="preset-dark" class="grow">Dark preset</button>
+        </div>
+        <div class="row">
+          <div class="grow">
+            <label for="cfg-bg">Background</label>
+            <input id="cfg-bg" type="color">
+          </div>
+          <div class="grow">
+            <label for="cfg-fg">Foreground</label>
+            <input id="cfg-fg" type="color">
+          </div>
+        </div>
+        <label for="cfg-density">Article list display</label>
+        <select id="cfg-density">
+          <option value="text">Text only</option>
+          <option value="small">Text &amp; small image</option>
+          <option value="large">Text &amp; large image</option>
+        </select>
+        <label for="cfg-preview-lines">Preview lines per article (incl. title)</label>
+        <input id="cfg-preview-lines" type="number" min="2" max="10" value="3">
+        <label for="cfg-startup-mode">Startup screen</label>
+        <select id="cfg-startup-mode"></select>
+      </fieldset>
+
+      <fieldset>
+        <legend>Cache</legend>
+        <label for="cfg-cache-size">Max image cache size</label>
+        <select id="cfg-cache-size">
+          <option value="104857600">100 MB</option>
+          <option value="262144000">250 MB</option>
+          <option value="536870912">500 MB</option>
+          <option value="1073741824">1 GB</option>
+          <option value="2147483648">2 GB</option>
+          <option value="5368709120">5 GB</option>
+        </select>
+        <label for="cfg-max-item">Max size for a single cached item (MB)</label>
+        <input id="cfg-max-item" type="number" min="1" max="50" value="2">
+        <div class="row between" style="margin-top:.9em;">
+          <span class="muted">Cache in use: <span id="cache-usage" class="mono-num">&mdash;</span></span>
+          <button id="btn-clear-cache">Clear image cache</button>
+        </div>
+      </fieldset>
+
+      <div class="row" style="margin:1.2em 0 2em;">
+        <button id="btn-save-config" class="primary grow">Save configuration</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FEED LIST SCREEN ===== -->
+  <section id="screen-feeds" class="screen hidden">
+    <div id="refresh-indicator"></div>
+    <div class="row between" style="padding:.6em .9em;">
+      <span class="muted">Sort</span>
+      <span class="row" style="gap:.4em;">
+        <select id="feed-sort-field">
+          <option value="name">Name</option>
+          <option value="count">Unread</option>
+        </select>
+        <button id="feed-sort-dir" class="icon">&#8595;</button>
+      </span>
+    </div>
+    <div id="feed-list"></div>
+  </section>
+
+  <!-- ===== ARTICLE LIST SCREEN ===== -->
+  <section id="screen-articles" class="screen hidden">
+    <div class="tabs">
+      <button class="tab" data-filter="unread">Unread</button>
+      <button class="tab" data-filter="all">All</button>
+      <button class="tab" data-filter="starred">Starred</button>
+    </div>
+    <div class="row between" style="padding:.5em .9em;">
+      <span class="muted">Sort</span>
+      <span class="row" style="gap:.4em;">
+        <select id="art-sort-field">
+          <option value="date">Date</option>
+          <option value="size">Size</option>
+        </select>
+        <button id="art-sort-dir" class="icon">&#8595;</button>
+      </span>
+    </div>
+    <div id="article-list"></div>
+  </section>
+
+  <!-- ===== ARTICLE VIEW SCREEN ===== -->
+  <section id="screen-article" class="screen hidden">
+    <img id="art-enclosure" class="art-enclosure hidden">
+    <div class="art-head">
+      <h2 id="art-title"></h2>
+      <div class="meta">
+        <span id="art-feedname"></span> &middot; <span id="art-date"></span>
+      </div>
+    </div>
+    <div id="art-content" class="art-content"></div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================= CONFIG ============================= */
+const CFG_KEY = "nrp_config";
+const DEFAULT_CFG = {
+  minifluxUrl:"", minifluxToken:"", minifluxMaxItems:50,
+  wallabagUrl:"", wallabagClientId:"", wallabagClientSecret:"",
+  wallabagUsername:"", wallabagPassword:"",
+  wallabagAccessToken:null, wallabagRefreshToken:null, wallabagTokenExpiry:0,
+  alwaysShowImages:true, imageCacheMode:"on-read",
+  bgColor:"#F5F6F3", fgColor:"#1B1D1F", accentColor:"#B8752E",
+  startupMode:"feedlist",
+  density:"small", previewLines:3,
+  cacheSizeLimit:536870912, maxItemSizeMB:2,
+  selectedFeeds:[] // [{id,title}]
+};
+
+function loadConfig(){
+  try{
+    const raw = localStorage.getItem(CFG_KEY);
+    if(!raw) return Object.assign({}, DEFAULT_CFG);
+    return Object.assign({}, DEFAULT_CFG, JSON.parse(raw));
+  }catch(e){ return Object.assign({}, DEFAULT_CFG); }
+}
+function saveConfig(cfg){ localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
+let CFG = loadConfig();
+
+function applyTheme(){
+  document.documentElement.style.setProperty("--bg", CFG.bgColor);
+  document.documentElement.style.setProperty("--fg", CFG.fgColor);
+  document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute("content", CFG.bgColor);
+}
+
+/* ============================= MANIFEST / ICON (inline, no 2nd file) ============================= */
+function buildIconDataUri(){
+  const bg = CFG.accentColor || "#B8752E";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
+    <rect width="512" height="512" fill="${bg}"/>
+    <text x="50%" y="55%" font-family="monospace" font-size="180" font-weight="700"
+      fill="#141414" text-anchor="middle" dominant-baseline="middle">NRP</text>
+  </svg>`;
+  return "data:image/svg+xml;base64," + btoa(svg);
+}
+function setupManifest(){
+  const icon = buildIconDataUri();
+  const manifest = {
+    name:"NRP News Reader", short_name:"NRP",
+    start_url:"./index.html", scope:"./",
+    display:"standalone", background_color:CFG.bgColor, theme_color:CFG.bgColor,
+    icons:[
+      {src:icon, sizes:"192x192", type:"image/svg+xml", purpose:"any"},
+      {src:icon, sizes:"512x512", type:"image/svg+xml", purpose:"any"}
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:"application/manifest+json"});
+  document.getElementById("manifest-link").href = URL.createObjectURL(blob);
+  document.getElementById("icon-link").href = icon;
+}
+
+/* ============================= INDEXEDDB ============================= */
+const DB_NAME = "nrp-db", DB_VERSION = 1;
+let dbp = null;
+function openDb(){
+  if(dbp) return dbp;
+  dbp = new Promise((resolve, reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains("entries")){
+        const s = db.createObjectStore("entries", {keyPath:"id"});
+        s.createIndex("by_feed", "feedId");
+        s.createIndex("by_starred", "starred");
+      }
+      if(!db.objectStoreNames.contains("assets")){
+        db.createObjectStore("assets", {keyPath:"url"});
+      }
+      if(!db.objectStoreNames.contains("outbox")){
+        db.createObjectStore("outbox", {keyPath:"seq", autoIncrement:true});
+      }
+      if(!db.objectStoreNames.contains("feedsCache")){
+        db.createObjectStore("feedsCache", {keyPath:"id"});
+      }
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+  return dbp;
+}
+async function tx(storeName, mode, fn){
+  const db = await openDb();
+  return new Promise((resolve, reject)=>{
+    const t = db.transaction(storeName, mode);
+    const store = t.objectStore(storeName);
+    let result;
+    Promise.resolve(fn(store)).then(r=>{ result = r; }).catch(reject);
+    t.oncomplete = ()=>resolve(result);
+    t.onerror = ()=>reject(t.error);
+    t.onabort = ()=>reject(t.error);
+  });
+}
+function reqp(req){
+  return new Promise((resolve, reject)=>{
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function idbGetAll(storeName, indexName, query){
+  const db = await openDb();
+  const t = db.transaction(storeName, "readonly");
+  const store = indexName ? t.objectStore(storeName).index(indexName) : t.objectStore(storeName);
+  return reqp(store.getAll(query));
+}
+
+/* ---- entries ---- */
+async function putEntries(list){
+  return tx("entries", "readwrite", store=>{
+    list.forEach(e=>store.put(e));
+  });
+}
+async function getEntry(id){ return tx("entries","readonly", store=>reqp(store.get(id))); }
+async function getEntriesByFeed(feedId){ return idbGetAll("entries","by_feed", feedId); }
+async function getStarredEntries(){ return idbGetAll("entries","by_starred", true); }
+async function deleteEntries(ids){
+  return tx("entries","readwrite", store=>{ ids.forEach(id=>store.delete(id)); });
+}
+
+/* ---- assets (image cache) ---- */
+async function cacheUsageBytes(){
+  const all = await idbGetAll("assets");
+  return all.reduce((sum,a)=>sum+(a.size||0), 0);
+}
+async function evictLru(neededBytes){
+  let all = await idbGetAll("assets");
+  all = all.filter(a=>!a.protectedFlag).sort((a,b)=>a.lastAccessed-b.lastAccessed);
+  let used = (await idbGetAll("assets")).reduce((s,a)=>s+(a.size||0),0);
+  let i = 0;
+  while(used + neededBytes > CFG.cacheSizeLimit && i < all.length){
+    const victim = all[i++];
+    await tx("assets","readwrite", store=>store.delete(victim.url));
+    used -= victim.size||0;
+  }
+}
+async function getCachedAsset(url){ return tx("assets","readonly", store=>reqp(store.get(url))); }
+async function storeAsset(url, blob){
+  const maxBytes = CFG.maxItemSizeMB * 1024 * 1024;
+  if(blob.size > maxBytes) throw new Error("item exceeds max cache item size");
+  await evictLru(blob.size);
+  const rec = {url, blob, size:blob.size, lastAccessed:Date.now(), protectedFlag:false};
+  await tx("assets","readwrite", store=>store.put(rec));
+  return rec;
+}
+async function touchAsset(url){
+  await tx("assets","readwrite", store=>{
+    const req = store.get(url);
+    req.onsuccess = ()=>{
+      const rec = req.result;
+      if(rec){ rec.lastAccessed = Date.now(); store.put(rec); }
+    };
+  });
+}
+async function clearAllAssets(){ return tx("assets","readwrite", store=>store.clear()); }
+
+/* Resolve an <img> src through the cache. Fetches original only on a cache
+   miss or a failed cache write, per spec. */
+const objectUrlCache = new Map();
+async function resolveImageSrc(url){
+  if(!url) return url;
+  if(objectUrlCache.has(url)) return objectUrlCache.get(url);
+  let rec = await getCachedAsset(url);
+  if(rec && rec.blob){
+    touchAsset(url);
+    const obj = URL.createObjectURL(rec.blob);
+    objectUrlCache.set(url, obj);
+    return obj;
+  }
+  try{
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error("fetch failed "+resp.status);
+    const blob = await resp.blob();
+    try{
+      await storeAsset(url, blob);
+    }catch(storeErr){
+      // storing failed (too big / quota) -- serve the fetched blob directly,
+      // do not treat as fatal.
+    }
+    const obj = URL.createObjectURL(blob);
+    objectUrlCache.set(url, obj);
+    return obj;
+  }catch(fetchErr){
+    return url; // offline & not cached: let <img> show its native broken state
+  }
+}
+
+/* find image URLs referenced inside an entry's HTML content */
+function extractImageUrls(html){
+  if(!html) return [];
+  const out = [];
+  const re = /<img[^>]+src=["']([^"']+)["']/gi;
+  let m;
+  while((m = re.exec(html))) out.push(m[1]);
+  return out;
+}
+async function prefetchImagesForEntry(entry){
+  const urls = extractImageUrls(entry.content);
+  if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
+  for(const url of urls){
+    const existing = await getCachedAsset(url);
+    if(existing) continue;
+    try{
+      const resp = await fetch(url);
+      if(resp.ok){
+        const blob = await resp.blob();
+        await storeAsset(url, blob).catch(()=>{});
+      }
+    }catch(e){ /* offline or blocked -- skip, will retry on read */ }
+  }
+}
+async function setProtection(entry, protectedFlag){
+  const urls = extractImageUrls(entry.content);
+  if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
+  for(const url of urls){
+    await tx("assets","readwrite", store=>{
+      const req = store.get(url);
+      req.onsuccess = ()=>{
+        const rec = req.result;
+        if(!rec) return;
+        if(protectedFlag){ rec.protectedFlag = true; store.put(rec); }
+        else{
+          // only clear protection if no other starred entry still needs it
+          idbGetAll("entries","by_starred", true).then(starred=>{
+            const stillNeeded = starred.some(e=>e.id!==entry.id && extractImageUrls(e.content).includes(url));
+            if(!stillNeeded){ rec.protectedFlag = false; store.put(rec); }
+          });
+        }
+      };
+    });
+  }
+}
+async function gcOrphanImages(){
+  const [entries, assets] = await Promise.all([idbGetAll("entries"), idbGetAll("assets")]);
+  const referenced = new Set();
+  entries.forEach(e=>{
+    extractImageUrls(e.content).forEach(u=>referenced.add(u));
+    if(e.enclosureUrl) referenced.add(e.enclosureUrl);
+  });
+  for(const a of assets){
+    if(!a.protectedFlag && !referenced.has(a.url)){
+      await tx("assets","readwrite", store=>store.delete(a.url));
+    }
+  }
+}
+
+/* ---- outbox ---- */
+async function enqueueOutbox(item){
+  item.createdAt = Date.now();
+  return tx("outbox","readwrite", store=>store.add(item));
+}
+async function processOutbox(){
+  const items = await idbGetAll("outbox");
+  items.sort((a,b)=>a.seq-b.seq);
+  for(const item of items){
+    try{
+      if(item.type === "mark-status"){
+        await mfMarkStatus(item.entryIds, item.status);
+      }else if(item.type === "toggle-star"){
+        await mfToggleBookmark(item.entryId);
+      }else if(item.type === "wallabag-save"){
+        await wbSaveEntry(item.title, item.content, item.url);
+      }
+      await tx("outbox","readwrite", store=>store.delete(item.seq));
+    }catch(e){
+      // still offline / server error -- stop, retry next time
+      break;
+    }
+  }
+}
+window.addEventListener("online", ()=>{ processOutbox(); });
+
+/* ============================= MINIFLUX API ============================= */
+function mfBase(){ return (CFG.minifluxUrl||"").replace(/\/+$/,""); }
+async function mfFetch(path, opts){
+  opts = opts || {};
+  const headers = Object.assign({"X-Auth-Token":CFG.minifluxToken}, opts.headers||{});
+  if(opts.body) headers["Content-Type"] = "application/json";
+  const resp = await fetch(mfBase()+path, Object.assign({}, opts, {headers}));
+  if(!resp.ok) throw new Error("Miniflux "+resp.status+" "+path);
+  if(resp.status === 204) return null;
+  return resp.json();
+}
+async function mfGetFeeds(){ return mfFetch("/v1/feeds"); }
+async function mfGetCounters(){ return mfFetch("/v1/feeds/counters"); }
+async function mfGetUnreadEntries(feedId, limit){
+  const q = `/v1/feeds/${feedId}/entries?status=unread&limit=${limit}&order=published_at&direction=desc`;
+  return mfFetch(q);
+}
+async function mfMarkStatus(entryIds, status){
+  return mfFetch("/v1/entries", {method:"PUT", body:JSON.stringify({entry_ids:entryIds, status})});
+}
+async function mfToggleBookmark(entryId){
+  return mfFetch(`/v1/entries/${entryId}/bookmark`, {method:"PUT"});
+}
+
+/* ============================= WALLABAG API ============================= */
+function wbBase(){ return (CFG.wallabagUrl||"").replace(/\/+$/,""); }
+async function wbEnsureToken(){
+  if(CFG.wallabagAccessToken && Date.now() < CFG.wallabagTokenExpiry - 30000) return CFG.wallabagAccessToken;
+  const body = new URLSearchParams({
+    grant_type:"password",
+    client_id:CFG.wallabagClientId,
+    client_secret:CFG.wallabagClientSecret,
+    username:CFG.wallabagUsername,
+    password:CFG.wallabagPassword
+  });
+  const resp = await fetch(wbBase()+"/oauth/v2/token", {
+    method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body
+  });
+  if(!resp.ok) throw new Error("Wallabag auth failed "+resp.status);
+  const data = await resp.json();
+  CFG.wallabagAccessToken = data.access_token;
+  CFG.wallabagRefreshToken = data.refresh_token;
+  CFG.wallabagTokenExpiry = Date.now() + (data.expires_in||3600)*1000;
+  saveConfig(CFG);
+  return CFG.wallabagAccessToken;
+}
+async function wbSaveEntry(title, content, url){
+  const token = await wbEnsureToken();
+  const resp = await fetch(wbBase()+"/api/entries", {
+    method:"POST",
+    headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token},
+    body:JSON.stringify({url, title, content})
+  });
+  if(!resp.ok) throw new Error("Wallabag save failed "+resp.status);
+  return resp.json();
+}
+
+/* ============================= HTML SANITIZE ============================= */
+function sanitizeHtml(html){
+  const doc = new DOMParser().parseFromString(html||"", "text/html");
+  doc.querySelectorAll("script,style,iframe,object,embed,form").forEach(n=>n.remove());
+  doc.querySelectorAll("*").forEach(el=>{
+    [...el.attributes].forEach(attr=>{
+      const name = attr.name.toLowerCase();
+      if(name.startsWith("on")) el.removeAttribute(attr.name);
+      if((name==="href"||name==="src") && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
+    });
+  });
+  return doc.body.innerHTML;
+}
+
+/* ============================= UI PLUMBING ============================= */
+const $ = sel => document.querySelector(sel);
+const screens = ["screen-config","screen-feeds","screen-articles","screen-article"];
+let navStack = [];
+let currentScreen = null;
+
+function showScreen(id, opts){
+  opts = opts || {};
+  screens.forEach(s=>$("#"+s).classList.toggle("hidden", s!==id));
+  currentScreen = id;
+  $("#btn-back").classList.toggle("hidden", navStack.length===0);
+  $("#top-title").textContent = opts.title || "NRP";
+  $("#top-actions").innerHTML = "";
+  (opts.actions||[]).forEach(a=>$("#top-actions").appendChild(a));
+}
+function navigate(id, opts){
+  if(currentScreen) navStack.push({id:currentScreen, opts:lastOpts});
+  lastOpts = opts;
+  showScreen(id, opts);
+}
+let lastOpts = {};
+$("#btn-back").addEventListener("click", ()=>{
+  const prev = navStack.pop();
+  if(prev){ lastOpts = prev.opts; showScreen(prev.id, prev.opts); }
+});
+$("#btn-config").addEventListener("click", ()=>{
+  if(currentScreen !== "screen-config") navigate("screen-config", {title:"Settings"});
+});
+
+let toastTimer = null;
+function toast(msg){
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>el.classList.remove("show"), 2600);
+}
+
+/* ============================= CONFIG SCREEN LOGIC ============================= */
+function populateConfigForm(){
+  $("#cfg-mf-url").value = CFG.minifluxUrl;
+  $("#cfg-mf-token").value = CFG.minifluxToken;
+  $("#cfg-mf-max").value = CFG.minifluxMaxItems;
+  $("#cfg-wb-url").value = CFG.wallabagUrl;
+  $("#cfg-wb-client-id").value = CFG.wallabagClientId;
+  $("#cfg-wb-client-secret").value = CFG.wallabagClientSecret;
+  $("#cfg-wb-username").value = CFG.wallabagUsername;
+  $("#cfg-wb-password").value = CFG.wallabagPassword;
+  $("#cfg-always-images").checked = CFG.alwaysShowImages;
+  $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
+  $("#cfg-bg").value = CFG.bgColor;
+  $("#cfg-fg").value = CFG.fgColor;
+  $("#cfg-density").value = CFG.density;
+  $("#cfg-preview-lines").value = CFG.previewLines;
+  $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
+  $("#cfg-max-item").value = CFG.maxItemSizeMB;
+
+  const startupSel = $("#cfg-startup-mode");
+  startupSel.innerHTML = "";
+  const optAll = document.createElement("option");
+  optAll.value = "feedlist"; optAll.textContent = "Feed list";
+  startupSel.appendChild(optAll);
+  CFG.selectedFeeds.forEach(f=>{
+    const o = document.createElement("option");
+    o.value = String(f.id); o.textContent = f.title;
+    startupSel.appendChild(o);
+  });
+  startupSel.value = CFG.startupMode;
+
+  cacheUsageBytes().then(bytes=>{
+    $("#cache-usage").textContent = (bytes/1048576).toFixed(1)+" MB";
+  });
+}
+
+$("#preset-light").addEventListener("click", ()=>{
+  $("#cfg-bg").value = "#F5F6F3"; $("#cfg-fg").value = "#1B1D1F";
+});
+$("#preset-dark").addEventListener("click", ()=>{
+  $("#cfg-bg").value = "#15171A"; $("#cfg-fg").value = "#E7E4DA";
+});
+
+let feedPickerChoices = null; // Map id -> {id,title,checked}
+$("#btn-manage-feeds").addEventListener("click", async ()=>{
+  const tmpCfg = {minifluxUrl:$("#cfg-mf-url").value, minifluxToken:$("#cfg-mf-token").value};
+  const savedCfg = CFG; CFG = Object.assign({}, CFG, tmpCfg);
+  try{
+    const feeds = await mfGetFeeds();
+    feedPickerChoices = new Map();
+    const selectedIds = new Set(CFG.selectedFeeds.map(f=>f.id));
+    feeds.forEach(f=>feedPickerChoices.set(f.id, {id:f.id, title:f.title, checked:selectedIds.has(f.id)}));
+    renderFeedPicker();
+    $("#feed-picker").classList.remove("hidden");
+  }catch(e){
+    toast("Could not load feeds: "+e.message);
+  }finally{
+    CFG = savedCfg;
+  }
+});
+function renderFeedPicker(){
+  const list = $("#feed-picker-list");
+  list.innerHTML = "";
+  [...feedPickerChoices.values()].sort((a,b)=>a.title.localeCompare(b.title)).forEach(f=>{
+    const row = document.createElement("div");
+    row.className = "chk-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = f.checked;
+    cb.addEventListener("change", ()=>{ f.checked = cb.checked; });
+    const lab = document.createElement("span"); lab.className = "grow"; lab.textContent = f.title;
+    row.appendChild(cb); row.appendChild(lab);
+    list.appendChild(row);
+  });
+}
+
+$("#btn-clear-cache").addEventListener("click", async ()=>{
+  await clearAllAssets();
+  objectUrlCache.clear();
+  toast("Image cache cleared");
+  cacheUsageBytes().then(b=>{ $("#cache-usage").textContent = (b/1048576).toFixed(1)+" MB"; });
+});
+
+$("#btn-save-config").addEventListener("click", async ()=>{
+  CFG.minifluxUrl = $("#cfg-mf-url").value.trim();
+  CFG.minifluxToken = $("#cfg-mf-token").value.trim();
+  CFG.minifluxMaxItems = parseInt($("#cfg-mf-max").value, 10) || 50;
+  CFG.wallabagUrl = $("#cfg-wb-url").value.trim();
+  CFG.wallabagClientId = $("#cfg-wb-client-id").value.trim();
+  CFG.wallabagClientSecret = $("#cfg-wb-client-secret").value.trim();
+  CFG.wallabagUsername = $("#cfg-wb-username").value.trim();
+  CFG.wallabagPassword = $("#cfg-wb-password").value;
+  CFG.alwaysShowImages = $("#cfg-always-images").checked;
+  CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
+  CFG.bgColor = $("#cfg-bg").value;
+  CFG.fgColor = $("#cfg-fg").value;
+  CFG.density = $("#cfg-density").value;
+  CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
+  CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
+  CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
+  CFG.startupMode = $("#cfg-startup-mode").value;
+
+  const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
+  if(feedPickerChoices){
+    const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({id:f.id, title:f.title}));
+    const nowIds = new Set(nowSelected.map(f=>f.id));
+    const removedIds = [...previouslySelected].filter(id=>!nowIds.has(id));
+    CFG.selectedFeeds = nowSelected;
+    saveConfig(CFG);
+    applyTheme(); setupManifest();
+    for(const id of removedIds){ await removeFeed(id); }
+    const addedFeeds = nowSelected.filter(f=>!previouslySelected.has(f.id));
+    for(const f of addedFeeds){ await syncFeed(f.id).catch(()=>{}); }
+  }else{
+    saveConfig(CFG);
+    applyTheme(); setupManifest();
+  }
+  toast("Configuration saved");
+  goToFeedList();
+});
+
+async function removeFeed(feedId){
+  const entries = await getEntriesByFeed(feedId);
+  const toDelete = entries.filter(e=>!e.starred).map(e=>e.id);
+  await deleteEntries(toDelete);
+  await tx("feedsCache","readwrite", store=>store.delete(feedId));
+  await gcOrphanImages();
+}
+
+/* ============================= SYNC ============================= */
+async function syncFeed(feedId){
+  const limit = CFG.minifluxMaxItems;
+  const raw = await mfGetUnreadEntries(feedId, limit);
+  const entries = (raw.entries||[]).map(e=>({
+    id:e.id, feedId:e.feed_id, title:e.title, url:e.url,
+    content: sanitizeHtml(e.content),
+    contentSize: (e.content||"").length,
+    publishedAt: e.published_at,
+    status: e.status,
+    starred: !!e.starred,
+    enclosureUrl: (e.enclosures && e.enclosures[0]) ? e.enclosures[0].url : null,
+    feedTitle: (e.feed && e.feed.title) || null
+  }));
+  // do not clobber a locally read/starred state with a stale server copy
+  for(const e of entries){
+    const existing = await getEntry(e.id);
+    if(existing){
+      e.status = existing.status;
+      e.starred = existing.starred;
+    }
+  }
+  await putEntries(entries);
+  if(CFG.imageCacheMode === "all"){
+    for(const e of entries){ await prefetchImagesForEntry(e); }
+  }
+}
+async function syncAllFeeds(){
+  await processOutbox();
+  for(const f of CFG.selectedFeeds){ await syncFeed(f.id).catch(()=>{}); }
+  await refreshCounters();
+}
+async function refreshCounters(){
+  try{
+    const counters = await mfGetCounters();
+    for(const f of CFG.selectedFeeds){
+      const rec = {id:f.id, title:f.title, unreadCount:(counters.unreads && counters.unreads[f.id]) || 0};
+      await tx("feedsCache","readwrite", store=>store.put(rec));
+    }
+  }catch(e){ /* offline: keep last known counters */ }
+}
+
+/* ============================= FEED LIST SCREEN ============================= */
+let feedSort = {field:"name", dir:"asc"};
+async function goToFeedList(){
+  navStack = []; lastOpts = {title:"Feeds"};
+  showScreen("screen-feeds", {title:"Feeds"});
+  await renderFeedList();
+  refreshCounters().then(renderFeedList);
+}
+async function renderFeedList(){
+  const cached = await idbGetAll("feedsCache");
+  const byId = new Map(cached.map(c=>[c.id, c]));
+  let rows = CFG.selectedFeeds.map(f=>({
+    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0
+  }));
+  rows.sort((a,b)=>{
+    let cmp = feedSort.field==="name" ? a.title.localeCompare(b.title) : a.unread-b.unread;
+    return feedSort.dir==="asc" ? cmp : -cmp;
+  });
+  const container = $("#feed-list");
+  container.innerHTML = "";
+  if(rows.length===0){
+    container.innerHTML = '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds from your Miniflux instance.</div>';
+    return;
+  }
+  rows.forEach(r=>{
+    const div = document.createElement("div");
+    div.className = "feed-row";
+    div.innerHTML = `<span class="name">${escapeHtml(r.title)}</span><span class="badge mono-num">${r.unread}</span>`;
+    div.addEventListener("click", ()=>openArticleList(r.id, r.title));
+    container.appendChild(div);
+  });
+}
+$("#feed-sort-field").addEventListener("change", e=>{ feedSort.field=e.target.value; renderFeedList(); });
+$("#feed-sort-dir").addEventListener("click", ()=>{
+  feedSort.dir = feedSort.dir==="asc" ? "desc" : "asc";
+  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u2193" : "\u2191";
+  renderFeedList();
+});
+
+/* pull-to-refresh */
+(function setupPullToRefresh(){
+  const screen = $("#screen-feeds");
+  const indicator = $("#refresh-indicator");
+  let startY = null, pulling = false;
+  screen.addEventListener("touchstart", e=>{
+    if(screen.scrollTop <= 0){ startY = e.touches[0].clientY; pulling = true; }
+  }, {passive:true});
+  screen.addEventListener("touchmove", e=>{
+    if(!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if(dy > 0) indicator.textContent = dy > 70 ? "Release to refresh" : "Pull to refresh";
+  }, {passive:true});
+  screen.addEventListener("touchend", async e=>{
+    if(!pulling) return;
+    pulling = false;
+    const dy = (e.changedTouches[0].clientY - startY);
+    if(dy > 70){
+      indicator.textContent = "Refreshing\u2026";
+      await syncAllFeeds();
+      await renderFeedList();
+    }
+    indicator.textContent = "";
+  });
+})();
+
+/* ============================= ARTICLE LIST SCREEN ============================= */
+let currentFeed = null;
+let articleFilter = "unread";
+let artSort = {field:"date", dir:"desc"};
+
+function openArticleList(feedId, feedTitle){
+  currentFeed = {id:feedId, title:feedTitle};
+  navigate("screen-articles", {title:feedTitle});
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
+  renderArticleList();
+}
+document.querySelectorAll(".tab").forEach(t=>{
+  t.addEventListener("click", ()=>{
+    articleFilter = t.dataset.filter;
+    document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active", x===t));
+    renderArticleList();
+  });
+});
+$("#art-sort-field").addEventListener("change", e=>{ artSort.field=e.target.value; renderArticleList(); });
+$("#art-sort-dir").addEventListener("click", ()=>{
+  artSort.dir = artSort.dir==="asc" ? "desc" : "asc";
+  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u2193" : "\u2191";
+  renderArticleList();
+});
+
+async function renderArticleList(){
+  let entries = await getEntriesByFeed(currentFeed.id);
+  if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
+  else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
+  entries.sort((a,b)=>{
+    let cmp = artSort.field==="date"
+      ? new Date(a.publishedAt) - new Date(b.publishedAt)
+      : a.contentSize - b.contentSize;
+    return artSort.dir==="asc" ? cmp : -cmp;
+  });
+  const container = $("#article-list");
+  container.innerHTML = "";
+  if(entries.length===0){
+    container.innerHTML = '<div class="empty"><div class="big">Nothing here</div>Pull to refresh on the feed list to fetch new items.</div>';
+    return;
+  }
+  for(const e of entries){
+    const row = document.createElement("div");
+    row.className = "art-row" + (e.status==="read" ? " read" : "");
+    const previewText = stripTags(e.content).slice(0, 220);
+    const linesCss = Math.max(1, CFG.previewLines-1);
+    let thumbHtml = "";
+    if(CFG.density !== "text" && (CFG.alwaysShowImages)){
+      const imgUrl = e.enclosureUrl || firstImageUrl(e.content);
+      if(imgUrl) thumbHtml = `<img class="thumb${CFG.density==='large'?' large':''}" data-src="${escapeAttr(imgUrl)}">`;
+    }
+    row.innerHTML = `
+      ${thumbHtml}
+      <div class="body">
+        <div class="title">${e.starred?'<span class="star-dot">&#9733;</span>':''}${escapeHtml(e.title)}</div>
+        <div class="preview" style="-webkit-line-clamp:${linesCss};">${escapeHtml(previewText)}</div>
+        <div class="meta">${formatDate(e.publishedAt)} &middot; ${(e.contentSize/1024).toFixed(0)} KB</div>
+      </div>`;
+    row.addEventListener("click", ()=>openArticle(e.id));
+    container.appendChild(row);
+    const img = row.querySelector("img.thumb");
+    if(img){
+      resolveImageSrc(img.dataset.src).then(src=>{ img.src = src; });
+    }
+  }
+}
+function firstImageUrl(html){ const u = extractImageUrls(html); return u[0]||null; }
+function stripTags(html){
+  const d = document.createElement("div"); d.innerHTML = html||""; return d.textContent||"";
+}
+function formatDate(iso){
+  try{ return new Date(iso).toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
+  catch(e){ return ""; }
+}
+function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+
+/* ============================= ARTICLE VIEW SCREEN ============================= */
+let currentEntry = null;
+async function openArticle(entryId){
+  const entry = await getEntry(entryId);
+  if(!entry) return;
+  currentEntry = entry;
+
+  const starBtn = document.createElement("button");
+  starBtn.className = "icon"; starBtn.setAttribute("aria-label","Star");
+  starBtn.innerHTML = entry.starred ? "&#9733;" : "&#9734;";
+  starBtn.addEventListener("click", ()=>toggleStar());
+
+  const unreadBtn = document.createElement("button");
+  unreadBtn.className = "icon"; unreadBtn.title = "Mark unread";
+  unreadBtn.textContent = "\u21BA";
+  unreadBtn.addEventListener("click", ()=>markUnread());
+
+  const wbBtn = document.createElement("button");
+  wbBtn.className = "icon"; wbBtn.title = "Send to Wallabag";
+  wbBtn.textContent = "\u2913";
+  wbBtn.addEventListener("click", ()=>sendToWallabag());
+
+  navigate("screen-article", {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn]});
+
+  $("#art-title").textContent = entry.title;
+  $("#art-title").onclick = ()=>window.open(entry.url, "_blank", "noopener");
+  $("#art-feedname").textContent = entry.feedTitle || "";
+  $("#art-date").textContent = formatDate(entry.publishedAt);
+
+  const enc = $("#art-enclosure");
+  if(entry.enclosureUrl){
+    enc.classList.remove("hidden");
+    enc.onclick = ()=>window.open(entry.enclosureUrl, "_blank", "noopener");
+    resolveImageSrc(entry.enclosureUrl).then(src=>{ enc.src = src; });
+  }else{
+    enc.classList.add("hidden");
+  }
+
+  const contentDiv = $("#art-content");
+  contentDiv.innerHTML = entry.content || "";
+  const imgs = contentDiv.querySelectorAll("img");
+  for(const img of imgs){
+    const orig = img.getAttribute("src");
+    img.addEventListener("click", ()=>{
+      window.open(entry.enclosureUrl || orig, "_blank", "noopener");
+    });
+    if(orig) resolveImageSrc(orig).then(src=>{ img.src = src; });
+  }
+
+  if(CFG.imageCacheMode === "on-read"){ prefetchImagesForEntry(entry); }
+
+  if(entry.status !== "read"){ await markRead(entry); }
+}
+
+async function markRead(entry){
+  entry.status = "read";
+  await putEntries([entry]);
+  try{ await mfMarkStatus([entry.id], "read"); }
+  catch(e){ await enqueueOutbox({type:"mark-status", entryIds:[entry.id], status:"read"}); }
+}
+async function markUnread(){
+  if(!currentEntry) return;
+  currentEntry.status = "unread";
+  await putEntries([currentEntry]);
+  try{ await mfMarkStatus([currentEntry.id], "unread"); }
+  catch(e){ await enqueueOutbox({type:"mark-status", entryIds:[currentEntry.id], status:"unread"}); }
+  toast("Marked unread");
+}
+async function toggleStar(){
+  if(!currentEntry) return;
+  currentEntry.starred = !currentEntry.starred;
+  await putEntries([currentEntry]);
+  await setProtection(currentEntry, currentEntry.starred);
+  try{ await mfToggleBookmark(currentEntry.id); }
+  catch(e){ await enqueueOutbox({type:"toggle-star", entryId:currentEntry.id}); }
+  openArticle(currentEntry.id); // refresh star icon
+}
+async function sendToWallabag(){
+  if(!currentEntry) return;
+  toast("Sending to Wallabag\u2026");
+  try{
+    await wbSaveEntry(currentEntry.title, currentEntry.content, currentEntry.url);
+    toast("Saved to Wallabag");
+  }catch(e){
+    await enqueueOutbox({type:"wallabag-save", title:currentEntry.title, content:currentEntry.content, url:currentEntry.url});
+    toast("Offline: queued for Wallabag");
+  }
+}
+
+/* ============================= BOOT ============================= */
+function isConfigured(){
+  return !!(CFG.minifluxUrl && CFG.minifluxToken && CFG.selectedFeeds.length>0);
+}
+async function boot(){
+  applyTheme();
+  setupManifest();
+  populateConfigForm();
+
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  }
+
+  if(!isConfigured()){
+    showScreen("screen-config", {title:"Settings"});
+    return;
+  }
+  processOutbox();
+  if(CFG.startupMode === "feedlist"){
+    await goToFeedList();
+  }else{
+    const feed = CFG.selectedFeeds.find(f=>String(f.id)===String(CFG.startupMode));
+    if(feed){
+      navStack = []; lastOpts = {title:"Feeds"};
+      showScreen("screen-feeds", {title:"Feeds"});
+      await renderFeedList();
+      openArticleList(feed.id, feed.title);
+    }else{
+      await goToFeedList();
+    }
+  }
+  refreshCounters();
+}
+boot();
+
+})();
+</script>
+</body>
+</html>
