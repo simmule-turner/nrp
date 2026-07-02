@@ -10,8 +10,11 @@
 <style>
   :root{
     --bg:#F5F6F3; --fg:#1B1D1F; --accent:#B8752E; --accent-fg:#1B1D1F;
-    --border:rgba(0,0,0,0.14); --muted:rgba(27,29,31,0.58);
-    --raised:rgba(0,0,0,0.035); --danger:#B0402E;
+    --border:color-mix(in srgb, var(--fg) 14%, transparent);
+    --muted:color-mix(in srgb, var(--fg) 58%, transparent);
+    --raised:color-mix(in srgb, var(--fg) 5%, transparent);
+    --danger:#B0402E;
+    --fs-base:16px;
     --font-ui:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
     --font-read:Georgia,'Iowan Old Style','Palatino Linotype',serif;
   }
@@ -84,18 +87,18 @@
   .art-row .thumb{ flex:0 0 auto; width:56px; height:56px; object-fit:cover; border-radius:2px; border:1px solid var(--border); background:var(--raised); }
   .art-row .thumb.large{ width:96px; height:96px; }
   .art-row .body{ flex:1; min-width:0; }
-  .art-row .title{ font-family:var(--font-read); font-size:15px; font-weight:700; margin:0 0 .2em; }
-  .art-row .preview{ font-size:12.5px; color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
-  .art-row .meta{ font-size:11px; color:var(--muted); margin-top:.3em; }
+  .art-row .title{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 0.94); font-weight:700; margin:0 0 .2em; }
+  .art-row .preview{ font-size:calc(var(--fs-base) * 0.78); color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
+  .art-row .meta{ font-size:calc(var(--fs-base) * 0.69); color:var(--muted); margin-top:.3em; }
   .art-row .star-dot{ color:var(--accent); margin-right:.3em; }
 
   /* article view */
   .art-head{ padding:1em 1.1em .6em; border-bottom:1px solid var(--border); }
-  .art-head h2{ font-family:var(--font-read); font-size:22px; line-height:1.25; margin:0 0 .3em; cursor:pointer; }
-  .art-head .meta{ font-size:12px; color:var(--muted); }
-  .art-enclosure{ width:100%; max-height:280px; object-fit:cover; display:block; cursor:pointer; }
-  .art-content{ font-family:var(--font-read); font-size:16.5px; line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
-  .art-content img{ max-width:100%; height:auto; cursor:pointer; border-radius:2px; }
+  .art-head h2{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 1.375); line-height:1.25; margin:0 0 .3em; cursor:pointer; }
+  .art-head .meta{ font-size:calc(var(--fs-base) * 0.75); color:var(--muted); }
+  .art-enclosure{ max-width:100%; width:auto; height:auto; max-height:60vh; object-fit:contain; display:block; margin:0 auto; cursor:pointer; }
+  .art-content{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 1.03); line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
+  .art-content img{ display:block; max-width:100%; width:auto; height:auto; margin:0 0 .8em; cursor:pointer; border-radius:2px; }
   .art-content a{ color:var(--accent); }
   .art-content pre{ overflow-x:auto; background:var(--raised); padding:.7em; border-radius:2px; }
 
@@ -185,6 +188,8 @@
             <input id="cfg-fg" type="color">
           </div>
         </div>
+        <label for="cfg-font-size">Reading font size &mdash; <span id="font-size-label">16px</span></label>
+        <input id="cfg-font-size" type="range" min="12" max="26" step="1" value="16">
         <label for="cfg-density">Article list display</label>
         <select id="cfg-density">
           <option value="text">Text only</option>
@@ -286,7 +291,7 @@ const DEFAULT_CFG = {
   alwaysShowImages:true, imageCacheMode:"on-read",
   bgColor:"#F5F6F3", fgColor:"#1B1D1F", accentColor:"#B8752E",
   startupMode:"feedlist",
-  density:"small", previewLines:3,
+  density:"small", previewLines:3, fontSize:16,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   selectedFeeds:[] // [{id,title}]
 };
@@ -305,6 +310,7 @@ function applyTheme(){
   document.documentElement.style.setProperty("--bg", CFG.bgColor);
   document.documentElement.style.setProperty("--fg", CFG.fgColor);
   document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
+  document.documentElement.style.setProperty("--fs-base", (CFG.fontSize||16)+"px");
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute("content", CFG.bgColor);
 }
@@ -679,6 +685,8 @@ function populateConfigForm(){
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
   $("#cfg-bg").value = CFG.bgColor;
   $("#cfg-fg").value = CFG.fgColor;
+  $("#cfg-font-size").value = CFG.fontSize;
+  $("#font-size-label").textContent = CFG.fontSize + "px";
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
@@ -701,6 +709,10 @@ function populateConfigForm(){
   });
 }
 
+$("#cfg-font-size").addEventListener("input", ()=>{
+  $("#font-size-label").textContent = $("#cfg-font-size").value + "px";
+  document.documentElement.style.setProperty("--fs-base", $("#cfg-font-size").value+"px");
+});
 $("#preset-light").addEventListener("click", ()=>{
   $("#cfg-bg").value = "#F5F6F3"; $("#cfg-fg").value = "#1B1D1F";
 });
@@ -760,6 +772,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
   CFG.bgColor = $("#cfg-bg").value;
   CFG.fgColor = $("#cfg-fg").value;
+  CFG.fontSize = parseInt($("#cfg-font-size").value, 10) || 16;
   CFG.density = $("#cfg-density").value;
   CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
   CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
@@ -904,6 +917,7 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
 let currentFeed = null;
 let articleFilter = "unread";
 let artSort = {field:"date", dir:"desc"};
+let lastArticleOrder = [];
 
 function openArticleList(feedId, feedTitle){
   currentFeed = {id:feedId, title:feedTitle};
@@ -935,6 +949,7 @@ async function renderArticleList(){
       : a.contentSize - b.contentSize;
     return artSort.dir==="asc" ? cmp : -cmp;
   });
+  lastArticleOrder = entries.map(e=>e.id);
   const container = $("#article-list");
   container.innerHTML = "";
   if(entries.length===0){
@@ -979,6 +994,18 @@ function escapeAttr(s){ return escapeHtml(s); }
 
 /* ============================= ARTICLE VIEW SCREEN ============================= */
 let currentEntry = null;
+
+/* Reddit-style feeds render "submitted by ... [link] ... [comments]" as literal
+   anchor text in the content. Prefer that as the click target for images;
+   fall back to a Miniflux enclosure, then the article's own URL. */
+function findLinkTarget(contentDiv, entry){
+  const anchors = contentDiv.querySelectorAll("a");
+  for(const a of anchors){
+    if(a.textContent.trim().toLowerCase() === "[link]") return a.getAttribute("href");
+  }
+  return entry.enclosureUrl || null;
+}
+
 async function openArticle(entryId){
   const entry = await getEntry(entryId);
   if(!entry) return;
@@ -996,39 +1023,61 @@ async function openArticle(entryId){
 
   const wbBtn = document.createElement("button");
   wbBtn.className = "icon"; wbBtn.title = "Send to Wallabag";
-  wbBtn.textContent = "\u2913";
+  wbBtn.textContent = "\u2709"; // envelope -- unambiguous "send"
   wbBtn.addEventListener("click", ()=>sendToWallabag());
 
-  navigate("screen-article", {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn]});
+  const nextBtn = document.createElement("button");
+  nextBtn.className = "icon"; nextBtn.title = "Next article";
+  nextBtn.textContent = "\u2192"; // arrow
+  nextBtn.addEventListener("click", ()=>nextArticle());
+
+  navigate("screen-article", {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]});
 
   $("#art-title").textContent = entry.title;
   $("#art-title").onclick = ()=>window.open(entry.url, "_blank", "noopener");
   $("#art-feedname").textContent = entry.feedTitle || "";
   $("#art-date").textContent = formatDate(entry.publishedAt);
 
+  const contentDiv = $("#art-content");
+  contentDiv.innerHTML = entry.content || "";
+  const linkTarget = findLinkTarget(contentDiv, entry);
+
+  const inlineImgs = contentDiv.querySelectorAll("img");
   const enc = $("#art-enclosure");
-  if(entry.enclosureUrl){
+  if(inlineImgs.length > 0){
+    // content already carries its own top image(s) -- don't duplicate it
+    // as a separate banner above the title.
+    enc.classList.add("hidden");
+    for(const img of inlineImgs){
+      const orig = img.getAttribute("src");
+      img.addEventListener("click", ()=>{
+        window.open(linkTarget || orig, "_blank", "noopener");
+      });
+      if(orig) resolveImageSrc(orig).then(src=>{ img.src = src; });
+    }
+  }else if(entry.enclosureUrl){
+    // no inline image in the content -- fall back to showing the enclosure
+    // at its natural size, above the title.
     enc.classList.remove("hidden");
-    enc.onclick = ()=>window.open(entry.enclosureUrl, "_blank", "noopener");
+    enc.onclick = ()=>window.open(linkTarget || entry.enclosureUrl, "_blank", "noopener");
     resolveImageSrc(entry.enclosureUrl).then(src=>{ enc.src = src; });
   }else{
     enc.classList.add("hidden");
   }
 
-  const contentDiv = $("#art-content");
-  contentDiv.innerHTML = entry.content || "";
-  const imgs = contentDiv.querySelectorAll("img");
-  for(const img of imgs){
-    const orig = img.getAttribute("src");
-    img.addEventListener("click", ()=>{
-      window.open(entry.enclosureUrl || orig, "_blank", "noopener");
-    });
-    if(orig) resolveImageSrc(orig).then(src=>{ img.src = src; });
-  }
-
   if(CFG.imageCacheMode === "on-read"){ prefetchImagesForEntry(entry); }
 
   if(entry.status !== "read"){ await markRead(entry); }
+}
+
+function nextArticle(){
+  if(!currentEntry || lastArticleOrder.length===0) return;
+  const idx = lastArticleOrder.indexOf(currentEntry.id);
+  if(idx === -1 || idx === lastArticleOrder.length-1){
+    toast("No more articles in this list");
+    return;
+  }
+  openArticle(lastArticleOrder[idx+1]);
 }
 
 async function markRead(entry){
