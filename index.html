@@ -133,19 +133,6 @@
     opacity:0; pointer-events:none; transition:opacity .2s ease;
   }
   .toast.show{ opacity:1; }
-
-  /* Toolbar placement config */
-  body.toolbar-bottom .topbar {
-    order: 2;
-    border-bottom: none;
-    border-top: 1px solid var(--border);
-  }
-  body.toolbar-bottom .screen {
-    order: 1;
-  }
-  body.toolbar-bottom .toast {
-    bottom: 4.5em; /* Shift toast above the bottom toolbar */
-  }
 </style>
 </head>
 <body>
@@ -223,11 +210,6 @@
 
       <fieldset>
         <legend>Appearance</legend>
-        <label for="cfg-toolbar-placement">Toolbar placement</label>
-        <select id="cfg-toolbar-placement">
-          <option value="top">Top</option>
-          <option value="bottom">Bottom</option>
-        </select>
         <label for="cfg-theme-mode">Theme Mode</label>
         <select id="cfg-theme-mode">
           <option value="system">System Default</option>
@@ -377,7 +359,6 @@ const DEFAULT_CFG = {
   density:"small", previewLines:3, fontSize:16,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   folderMode:"none", folders:[],
-  toolbarPlacement: "top",
   selectedFeeds:[] // [{id,title,folderName}]
 };
 
@@ -413,7 +394,6 @@ function applyTheme(){
   document.documentElement.style.setProperty("--fs-base", (CFG.fontSize||16)+"px");
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute("content", bg);
-  document.body.classList.toggle("toolbar-bottom", CFG.toolbarPlacement === "bottom");
 }
 
 if (window.matchMedia) {
@@ -935,7 +915,6 @@ function populateConfigForm(){
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
 
   $("#cfg-folder-mode").value = CFG.folderMode;
-  $("#cfg-toolbar-placement").value = CFG.toolbarPlacement || "top";
   $("#manual-folder-ui").classList.toggle("hidden", CFG.folderMode !== "manual");
   renderFolderChips();
 
@@ -1128,8 +1107,6 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
-
-  CFG.toolbarPlacement = $("#cfg-toolbar-placement").value;
 
   const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
   if(feedPickerChoices){
