@@ -534,6 +534,11 @@ async function cacheStats(){
   const bytes = assets.reduce((s,a)=>s+(a.size||0), 0);
   return {imageCount:assets.length, imageBytes:bytes, articleCount:entries.length};
 }
+
+/* Full reset: wipes every locally cached article, image, and pending sync
+   action. Deliberately leaves CFG.selectedFeeds (and all other settings)
+   untouched in localStorage, so the app looks exactly like it does right
+   after picking feeds for the first time -- the next sync repopulates it. */
 async function clearAllCachedData(){
   await tx("entries","readwrite", store=>store.clear());
   await tx("assets","readwrite", store=>store.clear());
@@ -603,7 +608,8 @@ async function resolveThumbnailSrc(url){
   return fullSrc;
 }
 
-/* Resolve Image */
+/* Resolve an <img> src through the cache. Fetches original only on a cache
+   miss or a failed cache write, per spec. */
 async function resolveImageSrc(url){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
@@ -615,6 +621,8 @@ async function resolveImageSrc(url){
     return obj;
   }
   try{
+    // Prefer a normal, readable fetch -- this is the only kind of response we
+    // can verify actually succeeded and can safely both cache and display.
     const resp = await fetch(url, {referrerPolicy:"no-referrer"});
     if(resp.ok){
       const blob = await resp.blob();
@@ -623,11 +631,18 @@ async function resolveImageSrc(url){
       objectUrlCache.set(url, obj);
       return obj;
     }
-  }catch(fetchErr){ }
+  }catch(e){ /* likely CORS-blocked -- fall through to opaque attempt */ }
 
+  // Can't get a verifiable response (CORS-blocked). An opaque no-cors blob
+  // can't be checked for success/failure, so showing it risks displaying a
+  // broken image with no way to tell. Show the original URL directly
+  // instead -- browsers can load cross-origin images without CORS, so this
+  // reliably renders -- and try to warm the cache in the background without
+  // it affecting what's on screen right now.
   cacheOpaqueInBackground(url);
   return url;
 }
+
 function cacheOpaqueInBackground(url){
   fetch(url, {mode:"no-cors", referrerPolicy:"no-referrer"})
     .then(resp=>resp.blob())
@@ -686,7 +701,10 @@ async function setProtection(entry, protectedFlag){
                   break;
                }
             }
-            if(!stillNeeded){ rec.protectedFlag = false; store.put(rec); }
+            if(!stillNeeded){ 
+               // only clear protection if no other starred entry still needs it
+               rec.protectedFlag = false; store.put(rec); 
+            }
           });
         }
       };
