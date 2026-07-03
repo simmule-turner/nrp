@@ -75,10 +75,17 @@
   /* feed list */
   #refresh-indicator{ text-align:center; font-size:12px; color:var(--muted); padding:.4em; height:1.6em; }
   .feed-folder-header{
-    padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.07em;
+    display:flex; align-items:center; gap:.5em; padding:.7em .9em; min-height:44px;
+    font-size:12px; text-transform:uppercase; letter-spacing:.07em; cursor:pointer;
     color:var(--muted); background:var(--raised); border-top:1px solid var(--border);
     border-bottom:1px solid var(--border); font-weight:700;
   }
+  .feed-folder-header:active{ background:color-mix(in srgb, var(--fg) 8%, transparent); }
+  .feed-folder-header .chevron{ display:inline-block; width:1em; font-size:11px; }
+  .feed-folder-header .folder-name{ flex:0 0 auto; }
+  .feed-folder-header .folder-count{ font-weight:400; text-transform:none; letter-spacing:0; }
+  .feed-folder-header .grow{ flex:1; }
+  .feed-folder-body.hidden{ display:none; }
   .feed-row{
     display:flex; align-items:center; gap:.7em; padding:1em .9em; border-bottom:1px solid var(--border);
     cursor:pointer; min-height:44px;
@@ -1043,6 +1050,15 @@ async function refreshCounters(){
 
 /* ============================= FEED LIST SCREEN ============================= */
 let feedSort = {field:"name", dir:"asc"};
+const COLLAPSED_KEY = "nrp_collapsed_folders";
+let collapsedFolders = loadCollapsedFolders();
+function loadCollapsedFolders(){
+  try{ return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY)||"[]")); }
+  catch(e){ return new Set(); }
+}
+function saveCollapsedFolders(){
+  localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedFolders]));
+}
 async function goToFeedList(){
   navStack = []; lastOpts = {title:"Feeds"};
   showScreen("screen-feeds", {title:"Feeds"});
@@ -1065,15 +1081,15 @@ async function renderFeedList(){
     let cmp = feedSort.field==="name" ? a.title.localeCompare(b.title) : a.unread-b.unread;
     return feedSort.dir==="asc" ? cmp : -cmp;
   });
-  const renderRow = r=>{
+  const renderRow = (r, target)=>{
     const div = document.createElement("div");
     div.className = "feed-row";
     div.innerHTML = `<span class="name">${escapeHtml(r.title)}</span><span class="badge mono-num">${r.unread}</span>`;
     div.addEventListener("click", ()=>openArticleList(r.id, r.title));
-    container.appendChild(div);
+    (target||container).appendChild(div);
   };
   if(CFG.folderMode === "none"){
-    sortRows(rows).forEach(renderRow);
+    sortRows(rows).forEach(r=>renderRow(r));
   }else{
     const groups = new Map();
     rows.forEach(r=>{
@@ -1087,11 +1103,32 @@ async function renderFeedList(){
       return a.localeCompare(b);
     });
     groupNames.forEach(name=>{
+      const group = groups.get(name);
+      const folderUnread = group.reduce((s,r)=>s+r.unread, 0);
+      const isCollapsed = collapsedFolders.has(name);
+
       const header = document.createElement("div");
       header.className = "feed-folder-header";
-      header.textContent = name;
+      header.innerHTML = `
+        <span class="chevron">${isCollapsed ? "\u25B8" : "\u25BE"}</span>
+        <span class="folder-name">${escapeHtml(name)}</span>
+        <span class="folder-count grow">${group.length} feed${group.length!==1?"s":""}</span>
+        ${folderUnread>0 ? `<span class="badge mono-num">${folderUnread}</span>` : ""}
+      `;
+
+      const body = document.createElement("div");
+      body.className = "feed-folder-body" + (isCollapsed ? " hidden" : "");
+      sortRows(group).forEach(r=>renderRow(r, body));
+
+      header.addEventListener("click", ()=>{
+        const nowCollapsed = body.classList.toggle("hidden");
+        header.querySelector(".chevron").textContent = nowCollapsed ? "\u25B8" : "\u25BE";
+        if(nowCollapsed) collapsedFolders.add(name); else collapsedFolders.delete(name);
+        saveCollapsedFolders();
+      });
+
       container.appendChild(header);
-      sortRows(groups.get(name)).forEach(renderRow);
+      container.appendChild(body);
     });
   }
 }
