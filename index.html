@@ -61,6 +61,7 @@
   }
   .topbar h1{ font-size:14px; margin:0; letter-spacing:.04em; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #top-actions{ display:flex; gap:.3em; flex-wrap:nowrap; }
+  #top-actions button.icon { font-size:1.65em; } /* Increased top icon size for display article screen */
   .screen{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
   .pad{ padding:1em; max-width:640px; margin:0 auto; }
 
@@ -210,18 +211,31 @@
 
       <fieldset>
         <legend>Appearance</legend>
+        <label for="cfg-theme-mode">Theme Mode</label>
+        <select id="cfg-theme-mode">
+          <option value="system">System Default</option>
+          <option value="light">Always Light</option>
+          <option value="dark">Always Dark</option>
+        </select>
         <div class="row" style="margin-bottom:.6em;">
-          <button id="preset-light" class="grow">Light preset</button>
-          <button id="preset-dark" class="grow">Dark preset</button>
+          <button id="preset-defaults" class="grow chip">Reset to defaults</button>
         </div>
-        <div class="row">
-          <div class="grow">
-            <label for="cfg-bg">Background</label>
-            <input id="cfg-bg" type="color">
+        <div class="row wrap" style="margin-bottom:.8em;">
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-light-bg">Light Bg</label>
+            <input id="cfg-light-bg" type="color">
           </div>
-          <div class="grow">
-            <label for="cfg-fg">Foreground</label>
-            <input id="cfg-fg" type="color">
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-light-fg">Light Fg</label>
+            <input id="cfg-light-fg" type="color">
+          </div>
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-dark-bg">Dark Bg</label>
+            <input id="cfg-dark-bg" type="color">
+          </div>
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-dark-fg">Dark Fg</label>
+            <input id="cfg-dark-fg" type="color">
           </div>
         </div>
         <label for="cfg-font-size">Reading font size &mdash; <span id="font-size-label">16px</span></label>
@@ -259,6 +273,15 @@
           Clearing removes all cached articles, images, and pending sync actions,
           but keeps your selected feeds so the next sync starts fresh.
         </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Data &amp; Configuration</legend>
+        <div class="row wrap">
+          <button id="btn-export-cfg" class="grow">Export Options</button>
+          <button id="btn-import-cfg" class="grow">Import Options</button>
+          <input type="file" id="file-import-cfg" class="hidden" accept=".json">
+        </div>
       </fieldset>
 
       <div class="row" style="margin:1.2em 0 2em;">
@@ -329,7 +352,10 @@ const DEFAULT_CFG = {
   wallabagUsername:"", wallabagPassword:"",
   wallabagAccessToken:null, wallabagRefreshToken:null, wallabagTokenExpiry:0,
   alwaysShowImages:true, imageCacheMode:"on-read",
-  bgColor:"#F5F6F3", fgColor:"#1B1D1F", accentColor:"#B8752E",
+  themeMode:"system",
+  lightBg:"#F5F6F3", lightFg:"#1B1D1F",
+  darkBg:"#15171A", darkFg:"#E7E4DA",
+  accentColor:"#B8752E",
   startupMode:"feedlist",
   density:"small", previewLines:3, fontSize:16,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
@@ -341,22 +367,42 @@ function loadConfig(){
   try{
     const raw = localStorage.getItem(CFG_KEY);
     if(!raw) return Object.assign({}, DEFAULT_CFG);
-    return Object.assign({}, DEFAULT_CFG, JSON.parse(raw));
+    let parsed = JSON.parse(raw);
+    
+    // Migration for older clients relying on single bg/fg
+    if(parsed.bgColor && !parsed.lightBg) {
+      parsed.lightBg = parsed.bgColor;
+      parsed.lightFg = parsed.fgColor;
+    }
+    
+    return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
 }
 function saveConfig(cfg){ localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
 let CFG = loadConfig();
 
 function applyTheme(){
-  document.documentElement.style.setProperty("--bg", CFG.bgColor);
-  document.documentElement.style.setProperty("--fg", CFG.fgColor);
+  let isDark = CFG.themeMode === "dark";
+  if (CFG.themeMode === "system") {
+    isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  const bg = isDark ? CFG.darkBg : CFG.lightBg;
+  const fg = isDark ? CFG.darkFg : CFG.lightFg;
+
+  document.documentElement.style.setProperty("--bg", bg);
+  document.documentElement.style.setProperty("--fg", fg);
   document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
   document.documentElement.style.setProperty("--fs-base", (CFG.fontSize||16)+"px");
   const meta = document.querySelector('meta[name="theme-color"]');
-  if(meta) meta.setAttribute("content", CFG.bgColor);
+  if(meta) meta.setAttribute("content", bg);
 }
 
-/* ============================= MANIFEST / ICON (inline, no 2nd file) ============================= */
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener("change", applyTheme);
+}
+
+
+/* ============================= MANIFEST / ICON ============================= */
 function buildIconDataUri(){
   const bg = CFG.accentColor || "#B8752E";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
@@ -371,7 +417,7 @@ function setupManifest(){
   const manifest = {
     name:"NRP News Reader", short_name:"NRP",
     start_url:"./index.html", scope:"./",
-    display:"standalone", background_color:CFG.bgColor, theme_color:CFG.bgColor,
+    display:"standalone", background_color:CFG.lightBg, theme_color:CFG.lightBg,
     icons:[
       {src:icon, sizes:"192x192", type:"image/svg+xml", purpose:"any"},
       {src:icon, sizes:"512x512", type:"image/svg+xml", purpose:"any"}
@@ -483,16 +529,11 @@ async function touchAsset(url){
     };
   });
 }
-async function clearAllAssets(){ return tx("assets","readwrite", store=>store.clear()); }
 async function cacheStats(){
   const [assets, entries] = await Promise.all([idbGetAll("assets"), idbGetAll("entries")]);
   const bytes = assets.reduce((s,a)=>s+(a.size||0), 0);
   return {imageCount:assets.length, imageBytes:bytes, articleCount:entries.length};
 }
-/* Full reset: wipes every locally cached article, image, and pending sync
-   action. Deliberately leaves CFG.selectedFeeds (and all other settings)
-   untouched in localStorage, so the app looks exactly like it does right
-   after picking feeds for the first time -- the next sync repopulates it. */
 async function clearAllCachedData(){
   await tx("entries","readwrite", store=>store.clear());
   await tx("assets","readwrite", store=>store.clear());
@@ -506,9 +547,63 @@ function updateCacheUsageDisplay(){
   });
 }
 
-/* Resolve an <img> src through the cache. Fetches original only on a cache
-   miss or a failed cache write, per spec. */
 const objectUrlCache = new Map();
+
+/* Thumbnail Generation */
+async function generateThumbnailBlob(srcObjUrl, maxSize) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w <= maxSize && h <= maxSize) {
+        resolve(null); // Signal that it's small enough to just use original
+        return;
+      }
+      const scale = maxSize / Math.max(w, h); 
+      const canvas = document.createElement('canvas');
+      canvas.width = w * scale;
+      canvas.height = h * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.8);
+    };
+    img.onerror = reject;
+    img.src = srcObjUrl;
+  });
+}
+
+async function resolveThumbnailSrc(url){
+  if(!url) return url;
+  const thumbKey = "thumb_" + url;
+  if(objectUrlCache.has(thumbKey)) return objectUrlCache.get(thumbKey);
+
+  let rec = await getCachedAsset(thumbKey);
+  if(rec && rec.blob){
+    touchAsset(thumbKey);
+    const obj = URL.createObjectURL(rec.blob);
+    objectUrlCache.set(thumbKey, obj);
+    return obj;
+  }
+
+  const fullSrc = await resolveImageSrc(url);
+  if (fullSrc === url) {
+    return url;
+  }
+  
+  try {
+    const thumbBlob = await generateThumbnailBlob(fullSrc, 144);
+    if (thumbBlob) {
+      await storeAsset(thumbKey, thumbBlob);
+      const obj = URL.createObjectURL(thumbBlob);
+      objectUrlCache.set(thumbKey, obj);
+      return obj;
+    }
+  } catch(e) { }
+
+  return fullSrc;
+}
+
+/* Resolve Image */
 async function resolveImageSrc(url){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
@@ -519,24 +614,17 @@ async function resolveImageSrc(url){
     objectUrlCache.set(url, obj);
     return obj;
   }
-  // Prefer a normal, readable fetch -- this is the only kind of response we
-  // can verify actually succeeded and can safely both cache and display.
   try{
     const resp = await fetch(url, {referrerPolicy:"no-referrer"});
     if(resp.ok){
       const blob = await resp.blob();
-      try{ await storeAsset(url, blob); }catch(storeErr){ /* too big / quota -- still display it below */ }
+      try{ await storeAsset(url, blob); }catch(storeErr){ }
       const obj = URL.createObjectURL(blob);
       objectUrlCache.set(url, obj);
       return obj;
     }
-  }catch(fetchErr){ /* likely CORS-blocked -- fall through */ }
-  // Can't get a verifiable response (CORS-blocked). An opaque no-cors blob
-  // can't be checked for success/failure, so showing it risks displaying a
-  // broken image with no way to tell. Show the original URL directly
-  // instead -- browsers can load cross-origin images without CORS, so this
-  // reliably renders -- and try to warm the cache in the background without
-  // it affecting what's on screen right now.
+  }catch(fetchErr){ }
+
   cacheOpaqueInBackground(url);
   return url;
 }
@@ -547,7 +635,6 @@ function cacheOpaqueInBackground(url){
     .catch(()=>{});
 }
 
-/* find image URLs referenced inside an entry's HTML content */
 function extractImageUrls(html){
   if(!html) return [];
   const out = [];
@@ -569,14 +656,18 @@ async function prefetchImagesForEntry(entry){
         await storeAsset(url, blob).catch(()=>{});
         continue;
       }
-    }catch(e){ /* likely CORS-blocked -- fall through to opaque attempt */ }
+    }catch(e){ }
     cacheOpaqueInBackground(url);
   }
 }
 async function setProtection(entry, protectedFlag){
   const urls = extractImageUrls(entry.content);
   if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
-  for(const url of urls){
+  
+  const allUrls = [];
+  urls.forEach(u=>{ allUrls.push(u); allUrls.push("thumb_"+u); });
+
+  for(const url of allUrls){
     await tx("assets","readwrite", store=>{
       const req = store.get(url);
       req.onsuccess = ()=>{
@@ -584,9 +675,17 @@ async function setProtection(entry, protectedFlag){
         if(!rec) return;
         if(protectedFlag){ rec.protectedFlag = true; store.put(rec); }
         else{
-          // only clear protection if no other starred entry still needs it
           idbGetAll("entries","by_starred", true).then(starred=>{
-            const stillNeeded = starred.some(e=>e.id!==entry.id && extractImageUrls(e.content).includes(url));
+            let stillNeeded = false;
+            for(const e of starred){
+               if(e.id === entry.id) continue;
+               const thisUrls = extractImageUrls(e.content);
+               if(e.enclosureUrl) thisUrls.push(e.enclosureUrl);
+               if(thisUrls.includes(url) || thisUrls.some(u=> "thumb_"+u === url)){
+                  stillNeeded = true;
+                  break;
+               }
+            }
             if(!stillNeeded){ rec.protectedFlag = false; store.put(rec); }
           });
         }
@@ -598,8 +697,8 @@ async function gcOrphanImages(){
   const [entries, assets] = await Promise.all([idbGetAll("entries"), idbGetAll("assets")]);
   const referenced = new Set();
   entries.forEach(e=>{
-    extractImageUrls(e.content).forEach(u=>referenced.add(u));
-    if(e.enclosureUrl) referenced.add(e.enclosureUrl);
+    extractImageUrls(e.content).forEach(u=>{ referenced.add(u); referenced.add("thumb_"+u); });
+    if(e.enclosureUrl) { referenced.add(e.enclosureUrl); referenced.add("thumb_"+e.enclosureUrl); }
   });
   for(const a of assets){
     if(!a.protectedFlag && !referenced.has(a.url)){
@@ -626,10 +725,7 @@ async function processOutbox(){
         await wbSaveEntry(item.title, item.content, item.url);
       }
       await tx("outbox","readwrite", store=>store.delete(item.seq));
-    }catch(e){
-      // still offline / server error -- stop, retry next time
-      break;
-    }
+    }catch(e){ break; }
   }
 }
 window.addEventListener("online", ()=>{ processOutbox(); });
@@ -698,10 +794,6 @@ function sanitizeHtml(html){
   const doc = new DOMParser().parseFromString(html||"", "text/html");
   doc.querySelectorAll("script,style,iframe,object,embed,form").forEach(n=>n.remove());
 
-  // Some feeds (podcast/newsletter/Reddit-style) lay out a thumbnail and
-  // text as a two-column table, or float an <img> so text wraps beside it.
-  // Strip both patterns so content always renders as a single column with
-  // images on their own line at natural size.
   ["colgroup","col"].forEach(tag=>{
     doc.querySelectorAll(tag).forEach(el=>el.remove());
   });
@@ -714,11 +806,6 @@ function sanitizeHtml(html){
     });
   });
 
-  // An <a> whose only content is a single <img> (a "click the thumbnail"
-  // link) is an inline element wrapping a block element. Browsers handle
-  // that inconsistently -- sometimes rendering it as a second column next
-  // to the image instead of stacking. We already attach click-to-navigate
-  // on every image in JS, so the wrapper is redundant: drop it.
   doc.querySelectorAll("a").forEach(a=>{
     const isImageOnly = a.children.length===1 && a.firstElementChild.tagName==="IMG" && a.textContent.trim()==="";
     if(isImageOnly){
@@ -734,8 +821,6 @@ function sanitizeHtml(html){
       const name = attr.name.toLowerCase();
       if(name.startsWith("on")) el.removeAttribute(attr.name);
       if((name==="href"||name==="src") && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
-      // inline style/align/valign are how source HTML floats images or
-      // forces a fixed small width -- strip so our single-column CSS wins.
       if(name==="style" || name==="align" || name==="valign") el.removeAttribute(attr.name);
     });
   });
@@ -796,8 +881,13 @@ function populateConfigForm(){
   $("#cfg-wb-password").value = CFG.wallabagPassword;
   $("#cfg-always-images").checked = CFG.alwaysShowImages;
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
-  $("#cfg-bg").value = CFG.bgColor;
-  $("#cfg-fg").value = CFG.fgColor;
+  
+  $("#cfg-theme-mode").value = CFG.themeMode;
+  $("#cfg-light-bg").value = CFG.lightBg;
+  $("#cfg-light-fg").value = CFG.lightFg;
+  $("#cfg-dark-bg").value = CFG.darkBg;
+  $("#cfg-dark-fg").value = CFG.darkFg;
+  
   $("#cfg-font-size").value = CFG.fontSize;
   $("#font-size-label").textContent = CFG.fontSize + "px";
   $("#cfg-density").value = CFG.density;
@@ -810,14 +900,9 @@ function populateConfigForm(){
   renderFolderChips();
 
   refreshStartupOptions();
-
   updateCacheUsageDisplay();
 }
 
-/* Keeps the "startup screen" dropdown in sync with whichever feeds are
-   currently checked in the feed picker (if it's open), so a feed you just
-   added can be picked as the startup screen without having to save and
-   reopen Settings first. */
 function refreshStartupOptions(){
   const source = feedPickerChoices
     ? [...feedPickerChoices.values()].filter(f=>f.checked)
@@ -841,11 +926,10 @@ $("#cfg-font-size").addEventListener("input", ()=>{
   $("#font-size-label").textContent = $("#cfg-font-size").value + "px";
   document.documentElement.style.setProperty("--fs-base", $("#cfg-font-size").value+"px");
 });
-$("#preset-light").addEventListener("click", ()=>{
-  $("#cfg-bg").value = "#F5F6F3"; $("#cfg-fg").value = "#1B1D1F";
-});
-$("#preset-dark").addEventListener("click", ()=>{
-  $("#cfg-bg").value = "#15171A"; $("#cfg-fg").value = "#E7E4DA";
+$("#preset-defaults").addEventListener("click", ()=>{
+  $("#cfg-theme-mode").value = "system";
+  $("#cfg-light-bg").value = "#F5F6F3"; $("#cfg-light-fg").value = "#1B1D1F";
+  $("#cfg-dark-bg").value = "#15171A"; $("#cfg-dark-fg").value = "#E7E4DA";
 });
 
 $("#cfg-folder-mode").addEventListener("change", ()=>{
@@ -885,7 +969,7 @@ function renderFolderChips(){
   });
 }
 
-let feedPickerChoices = null; // Map id -> {id,title,checked,categoryTitle,folderName}
+let feedPickerChoices = null; 
 $("#btn-manage-feeds").addEventListener("click", async ()=>{
   const tmpCfg = {minifluxUrl:$("#cfg-mf-url").value, minifluxToken:$("#cfg-mf-token").value};
   const savedCfg = CFG; CFG = Object.assign({}, CFG, tmpCfg);
@@ -952,6 +1036,33 @@ $("#btn-clear-cache").addEventListener("click", async ()=>{
   updateCacheUsageDisplay();
 });
 
+/* Import / Export Options */
+$("#btn-export-cfg").addEventListener("click", ()=>{
+  const data = JSON.stringify(CFG, null, 2);
+  const blob = new Blob([data], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "nrp-config.json";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+$("#btn-import-cfg").addEventListener("click", ()=> $("#file-import-cfg").click());
+$("#file-import-cfg").addEventListener("change", e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const parsed = JSON.parse(e.target.result);
+      Object.assign(CFG, parsed);
+      saveConfig(CFG);
+      toast("Config imported. Reloading...");
+      setTimeout(()=>location.reload(), 1000);
+    }catch(err){ toast("Invalid configuration file"); }
+  };
+  reader.readAsText(file);
+});
+
 $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.minifluxUrl = $("#cfg-mf-url").value.trim();
   CFG.minifluxToken = $("#cfg-mf-token").value.trim();
@@ -963,8 +1074,13 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.wallabagPassword = $("#cfg-wb-password").value;
   CFG.alwaysShowImages = $("#cfg-always-images").checked;
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
-  CFG.bgColor = $("#cfg-bg").value;
-  CFG.fgColor = $("#cfg-fg").value;
+  
+  CFG.themeMode = $("#cfg-theme-mode").value;
+  CFG.lightBg = $("#cfg-light-bg").value;
+  CFG.lightFg = $("#cfg-light-fg").value;
+  CFG.darkBg = $("#cfg-dark-bg").value;
+  CFG.darkFg = $("#cfg-dark-fg").value;
+  
   CFG.fontSize = parseInt($("#cfg-font-size").value, 10) || 16;
   CFG.density = $("#cfg-density").value;
   CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
@@ -1011,7 +1127,7 @@ async function syncFeed(feedId){
   const raw = await mfGetUnreadEntries(feedId, limit);
   const entries = (raw.entries||[]).map(e=>({
     id:e.id, feedId:e.feed_id, title:e.title, url:e.url,
-    content: e.content, // sanitized at render time, not here -- see openArticle()
+    content: e.content, 
     contentSize: (e.content||"").length,
     publishedAt: e.published_at,
     status: e.status,
@@ -1019,7 +1135,6 @@ async function syncFeed(feedId){
     enclosureUrl: (e.enclosures && e.enclosures[0]) ? e.enclosures[0].url : null,
     feedTitle: (e.feed && e.feed.title) || null
   }));
-  // do not clobber a locally read/starred state with a stale server copy
   for(const e of entries){
     const existing = await getEntry(e.id);
     if(existing){
@@ -1044,7 +1159,7 @@ async function refreshCounters(){
       const rec = {id:f.id, title:f.title, unreadCount:(counters.unreads && counters.unreads[f.id]) || 0};
       await tx("feedsCache","readwrite", store=>store.put(rec));
     }
-  }catch(e){ /* offline: keep last known counters */ }
+  }catch(e){ }
 }
 
 /* ============================= FEED LIST SCREEN ============================= */
@@ -1228,7 +1343,7 @@ async function renderArticleList(){
     container.appendChild(row);
     const img = row.querySelector("img.thumb");
     if(img){
-      resolveImageSrc(img.dataset.src).then(src=>{ img.src = src; });
+      resolveThumbnailSrc(img.dataset.src).then(src=>{ img.src = src; });
     }
   }
 }
@@ -1246,9 +1361,6 @@ function escapeAttr(s){ return escapeHtml(s); }
 /* ============================= ARTICLE VIEW SCREEN ============================= */
 let currentEntry = null;
 
-/* Reddit-style feeds render "submitted by ... [link] ... [comments]" as literal
-   anchor text in the content. Prefer that as the click target for images;
-   fall back to a Miniflux enclosure, then the article's own URL. */
 function findLinkTarget(contentDiv, entry){
   const anchors = contentDiv.querySelectorAll("a");
   for(const a of anchors){
@@ -1274,15 +1386,18 @@ async function openArticle(entryId){
 
   const wbBtn = document.createElement("button");
   wbBtn.className = "icon"; wbBtn.title = "Send to Wallabag";
-  wbBtn.textContent = "\u2709"; // envelope -- unambiguous "send"
+  wbBtn.textContent = "\u2709"; 
   wbBtn.addEventListener("click", ()=>sendToWallabag());
 
   const nextBtn = document.createElement("button");
   nextBtn.className = "icon"; nextBtn.title = "Next article";
-  nextBtn.textContent = "\u2192"; // arrow
+  nextBtn.textContent = "\u2192"; 
   nextBtn.addEventListener("click", ()=>nextArticle());
 
   navigate("screen-article", {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]});
+  
+  // FIX BUG: Ensure the article scroll view begins from the very top when it opens
+  $("#screen-article").scrollTop = 0; 
 
   $("#art-title").textContent = entry.title;
   $("#art-title").onclick = ()=>window.open(entry.url, "_blank", "noopener");
@@ -1296,8 +1411,6 @@ async function openArticle(entryId){
   const inlineImgs = contentDiv.querySelectorAll("img");
   const enc = $("#art-enclosure");
   if(inlineImgs.length > 0){
-    // content already carries its own top image(s) -- don't duplicate it
-    // as a separate banner above the title.
     enc.classList.add("hidden");
     for(const img of inlineImgs){
       const orig = img.getAttribute("src");
@@ -1307,8 +1420,6 @@ async function openArticle(entryId){
       if(orig) resolveImageSrc(orig).then(src=>{ img.src = src; });
     }
   }else if(entry.enclosureUrl){
-    // no inline image in the content -- fall back to showing the enclosure
-    // at its natural size, above the title.
     enc.classList.remove("hidden");
     enc.onclick = ()=>window.open(linkTarget || entry.enclosureUrl, "_blank", "noopener");
     resolveImageSrc(entry.enclosureUrl).then(src=>{ enc.src = src; });
@@ -1352,7 +1463,7 @@ async function toggleStar(){
   await setProtection(currentEntry, currentEntry.starred);
   try{ await mfToggleBookmark(currentEntry.id); }
   catch(e){ await enqueueOutbox({type:"toggle-star", entryId:currentEntry.id}); }
-  openArticle(currentEntry.id); // refresh star icon
+  openArticle(currentEntry.id);
 }
 async function sendToWallabag(){
   if(!currentEntry) return;
