@@ -506,25 +506,6 @@ function updateCacheUsageDisplay(){
   });
 }
 
-/* Many image hosts (e.g. Reddit's preview CDN) don't send CORS headers,
-   so a normal fetch() can't read the response body to cache it -- it just
-   fails silently, which is why the cache could end up looking empty. Fall
-   back to a no-cors request: we can't inspect an opaque response's bytes
-   or size, but the resulting blob still works as an <img> source, so we
-   can still cache and display it offline. */
-async function fetchImageBlob(url){
-  try{
-    const resp = await fetch(url);
-    if(resp.ok) return await resp.blob();
-  }catch(e){ /* likely CORS-blocked -- fall through to opaque fetch */ }
-  try{
-    const resp2 = await fetch(url, {mode:"no-cors"});
-    return await resp2.blob();
-  }catch(e2){
-    return null;
-  }
-}
-
 /* Resolve an <img> src through the cache. Fetches original only on a cache
    miss or a failed cache write, per spec. */
 const objectUrlCache = new Map();
@@ -538,21 +519,32 @@ async function resolveImageSrc(url){
     objectUrlCache.set(url, obj);
     return obj;
   }
+  // Prefer a normal, readable fetch -- this is the only kind of response we
+  // can verify actually succeeded and can safely both cache and display.
   try{
-    const blob = await fetchImageBlob(url);
-    if(!blob) throw new Error("fetch failed");
-    try{
-      await storeAsset(url, blob);
-    }catch(storeErr){
-      // storing failed (too big / quota) -- serve the fetched blob directly,
-      // do not treat as fatal.
+    const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+    if(resp.ok){
+      const blob = await resp.blob();
+      try{ await storeAsset(url, blob); }catch(storeErr){ /* too big / quota -- still display it below */ }
+      const obj = URL.createObjectURL(blob);
+      objectUrlCache.set(url, obj);
+      return obj;
     }
-    const obj = URL.createObjectURL(blob);
-    objectUrlCache.set(url, obj);
-    return obj;
-  }catch(fetchErr){
-    return url; // offline & not cached: let <img> show its native broken state
-  }
+  }catch(fetchErr){ /* likely CORS-blocked -- fall through */ }
+  // Can't get a verifiable response (CORS-blocked). An opaque no-cors blob
+  // can't be checked for success/failure, so showing it risks displaying a
+  // broken image with no way to tell. Show the original URL directly
+  // instead -- browsers can load cross-origin images without CORS, so this
+  // reliably renders -- and try to warm the cache in the background without
+  // it affecting what's on screen right now.
+  cacheOpaqueInBackground(url);
+  return url;
+}
+function cacheOpaqueInBackground(url){
+  fetch(url, {mode:"no-cors", referrerPolicy:"no-referrer"})
+    .then(resp=>resp.blob())
+    .then(blob=>{ if(blob && blob.size>0) return storeAsset(url, blob).catch(()=>{}); })
+    .catch(()=>{});
 }
 
 /* find image URLs referenced inside an entry's HTML content */
@@ -570,8 +562,15 @@ async function prefetchImagesForEntry(entry){
   for(const url of urls){
     const existing = await getCachedAsset(url);
     if(existing) continue;
-    const blob = await fetchImageBlob(url);
-    if(blob) await storeAsset(url, blob).catch(()=>{});
+    try{
+      const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+      if(resp.ok){
+        const blob = await resp.blob();
+        await storeAsset(url, blob).catch(()=>{});
+        continue;
+      }
+    }catch(e){ /* likely CORS-blocked -- fall through to opaque attempt */ }
+    cacheOpaqueInBackground(url);
   }
 }
 async function setProtection(entry, protectedFlag){
