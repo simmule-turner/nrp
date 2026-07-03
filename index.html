@@ -26,14 +26,19 @@
     -webkit-tap-highlight-color:transparent;
     display:flex; flex-direction:column; height:100vh; overflow:hidden;
   }
-  button, input, select{ font-family:inherit; font-size:14px; color:inherit; }
+  button, input, select{ font-family:inherit; font-size:15px; color:inherit; }
   button{
     background:var(--raised); border:1px solid var(--border); color:var(--fg);
-    padding:.5em .8em; cursor:pointer; border-radius:2px;
+    padding:.7em 1em; cursor:pointer; border-radius:4px; font-weight:600;
+    min-height:44px;
   }
   button:active{ transform:translateY(1px); }
-  button.primary{ background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
-  button.icon{ padding:.4em .55em; }
+  button.primary{ background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:700; }
+  button.icon{
+    padding:.5em; min-width:44px; min-height:44px; font-size:1.25em;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  button.chip{ padding:.4em .8em; min-height:auto; font-size:13px; font-weight:600; }
   input[type=text],input[type=password],input[type=number],input[type=url],select{
     width:100%; padding:.5em .6em; background:var(--bg); border:1px solid var(--border);
     border-radius:2px; color:var(--fg);
@@ -51,10 +56,11 @@
   .muted{ color:var(--muted); }
   .mono-num{ font-variant-numeric:tabular-nums; }
   .topbar{
-    display:flex; align-items:center; gap:.5em; padding:.7em .8em;
+    display:flex; align-items:center; gap:.4em; padding:.6em .6em;
     border-bottom:1px solid var(--border); background:var(--bg); flex:0 0 auto;
   }
   .topbar h1{ font-size:14px; margin:0; letter-spacing:.04em; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #top-actions{ display:flex; gap:.3em; flex-wrap:nowrap; }
   .screen{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
   .pad{ padding:1em; max-width:640px; margin:0 auto; }
 
@@ -68,9 +74,14 @@
 
   /* feed list */
   #refresh-indicator{ text-align:center; font-size:12px; color:var(--muted); padding:.4em; height:1.6em; }
+  .feed-folder-header{
+    padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--muted); background:var(--raised); border-top:1px solid var(--border);
+    border-bottom:1px solid var(--border); font-weight:700;
+  }
   .feed-row{
-    display:flex; align-items:center; gap:.7em; padding:.75em .9em; border-bottom:1px solid var(--border);
-    cursor:pointer;
+    display:flex; align-items:center; gap:.7em; padding:1em .9em; border-bottom:1px solid var(--border);
+    cursor:pointer; min-height:44px;
   }
   .feed-row:active{ background:var(--raised); }
   .feed-row .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -79,8 +90,8 @@
 
   /* article list */
   .tabs{ display:flex; border-bottom:1px solid var(--border); }
-  .tab{ flex:1; text-align:center; padding:.65em 0; background:none; border:none; border-radius:0; border-bottom:2px solid transparent; color:var(--muted); }
-  .tab.active{ color:var(--fg); border-bottom-color:var(--accent); font-weight:600; }
+  .tab{ flex:1; text-align:center; padding:1em 0; min-height:44px; background:none; border:none; border-radius:0; border-bottom:3px solid transparent; color:var(--muted); font-weight:600; }
+  .tab.active{ color:var(--fg); border-bottom-color:var(--accent); }
   .art-row{ display:flex; gap:.7em; padding:.8em .9em; border-bottom:1px solid var(--border); cursor:pointer; }
   .art-row:active{ background:var(--raised); }
   .art-row.read{ opacity:.55; }
@@ -98,7 +109,8 @@
   .art-head .meta{ font-size:calc(var(--fs-base) * 0.75); color:var(--muted); }
   .art-enclosure{ max-width:100%; width:auto; height:auto; max-height:60vh; object-fit:contain; display:block; margin:0 auto; cursor:pointer; }
   .art-content{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 1.03); line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
-  .art-content img{ display:block; max-width:100%; width:auto; height:auto; margin:0 0 .8em; cursor:pointer; border-radius:2px; }
+  .art-content *{ float:none !important; }
+  .art-content img{ display:block !important; float:none !important; max-width:100% !important; width:auto !important; height:auto !important; margin:0 0 .8em; cursor:pointer; border-radius:2px; }
   .art-content a{ color:var(--accent); }
   .art-content pre{ overflow-x:auto; background:var(--raised); padding:.7em; border-radius:2px; }
 
@@ -142,6 +154,23 @@
         </div>
         <div id="feed-picker" class="hidden" style="margin-top:.8em;">
           <div id="feed-picker-list" class="chk-list"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Organization</legend>
+        <label for="cfg-folder-mode">Group feeds into folders</label>
+        <select id="cfg-folder-mode">
+          <option value="none">No folders (flat list)</option>
+          <option value="manual">Manual folders</option>
+          <option value="miniflux">Mirror Miniflux categories</option>
+        </select>
+        <div id="manual-folder-ui" class="hidden" style="margin-top:.8em;">
+          <div class="row">
+            <input id="new-folder-name" type="text" placeholder="New folder name" class="grow">
+            <button id="btn-add-folder">Add</button>
+          </div>
+          <div id="folder-chip-list" class="row wrap" style="margin-top:.6em; gap:.4em;"></div>
         </div>
       </fieldset>
 
@@ -215,10 +244,14 @@
         </select>
         <label for="cfg-max-item">Max size for a single cached item (MB)</label>
         <input id="cfg-max-item" type="number" min="1" max="50" value="2">
-        <div class="row between" style="margin-top:.9em;">
-          <span class="muted">Cache in use: <span id="cache-usage" class="mono-num">&mdash;</span></span>
-          <button id="btn-clear-cache">Clear image cache</button>
+        <div class="row between wrap" style="margin-top:.9em; gap:.6em;">
+          <span class="muted">Cached: <span id="cache-usage" class="mono-num">&mdash;</span></span>
+          <button id="btn-clear-cache">Clear all cached data</button>
         </div>
+        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
+          Clearing removes all cached articles, images, and pending sync actions,
+          but keeps your selected feeds so the next sync starts fresh.
+        </p>
       </fieldset>
 
       <div class="row" style="margin:1.2em 0 2em;">
@@ -293,7 +326,8 @@ const DEFAULT_CFG = {
   startupMode:"feedlist",
   density:"small", previewLines:3, fontSize:16,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
-  selectedFeeds:[] // [{id,title}]
+  folderMode:"none", folders:[],
+  selectedFeeds:[] // [{id,title,folderName}]
 };
 
 function loadConfig(){
@@ -443,6 +477,46 @@ async function touchAsset(url){
   });
 }
 async function clearAllAssets(){ return tx("assets","readwrite", store=>store.clear()); }
+async function cacheStats(){
+  const [assets, entries] = await Promise.all([idbGetAll("assets"), idbGetAll("entries")]);
+  const bytes = assets.reduce((s,a)=>s+(a.size||0), 0);
+  return {imageCount:assets.length, imageBytes:bytes, articleCount:entries.length};
+}
+/* Full reset: wipes every locally cached article, image, and pending sync
+   action. Deliberately leaves CFG.selectedFeeds (and all other settings)
+   untouched in localStorage, so the app looks exactly like it does right
+   after picking feeds for the first time -- the next sync repopulates it. */
+async function clearAllCachedData(){
+  await tx("entries","readwrite", store=>store.clear());
+  await tx("assets","readwrite", store=>store.clear());
+  await tx("outbox","readwrite", store=>store.clear());
+  await tx("feedsCache","readwrite", store=>store.clear());
+  objectUrlCache.clear();
+}
+function updateCacheUsageDisplay(){
+  cacheStats().then(s=>{
+    $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`;
+  });
+}
+
+/* Many image hosts (e.g. Reddit's preview CDN) don't send CORS headers,
+   so a normal fetch() can't read the response body to cache it -- it just
+   fails silently, which is why the cache could end up looking empty. Fall
+   back to a no-cors request: we can't inspect an opaque response's bytes
+   or size, but the resulting blob still works as an <img> source, so we
+   can still cache and display it offline. */
+async function fetchImageBlob(url){
+  try{
+    const resp = await fetch(url);
+    if(resp.ok) return await resp.blob();
+  }catch(e){ /* likely CORS-blocked -- fall through to opaque fetch */ }
+  try{
+    const resp2 = await fetch(url, {mode:"no-cors"});
+    return await resp2.blob();
+  }catch(e2){
+    return null;
+  }
+}
 
 /* Resolve an <img> src through the cache. Fetches original only on a cache
    miss or a failed cache write, per spec. */
@@ -458,9 +532,8 @@ async function resolveImageSrc(url){
     return obj;
   }
   try{
-    const resp = await fetch(url);
-    if(!resp.ok) throw new Error("fetch failed "+resp.status);
-    const blob = await resp.blob();
+    const blob = await fetchImageBlob(url);
+    if(!blob) throw new Error("fetch failed");
     try{
       await storeAsset(url, blob);
     }catch(storeErr){
@@ -490,13 +563,8 @@ async function prefetchImagesForEntry(entry){
   for(const url of urls){
     const existing = await getCachedAsset(url);
     if(existing) continue;
-    try{
-      const resp = await fetch(url);
-      if(resp.ok){
-        const blob = await resp.blob();
-        await storeAsset(url, blob).catch(()=>{});
-      }
-    }catch(e){ /* offline or blocked -- skip, will retry on read */ }
+    const blob = await fetchImageBlob(url);
+    if(blob) await storeAsset(url, blob).catch(()=>{});
   }
 }
 async function setProtection(entry, protectedFlag){
@@ -623,12 +691,51 @@ async function wbSaveEntry(title, content, url){
 function sanitizeHtml(html){
   const doc = new DOMParser().parseFromString(html||"", "text/html");
   doc.querySelectorAll("script,style,iframe,object,embed,form").forEach(n=>n.remove());
+
+  // Some feeds (podcast/newsletter/Reddit-style) lay out a thumbnail and
+  // text as a two-column table, or float an <img> so text wraps beside it.
+  // Strip both patterns so content always renders as a single column with
+  // images on their own line at natural size.
+  ["colgroup","col"].forEach(tag=>{
+    doc.querySelectorAll(tag).forEach(el=>el.remove());
+  });
+  ["table","thead","tbody","tfoot","tr","td","th"].forEach(tag=>{
+    doc.querySelectorAll(tag).forEach(el=>{
+      const parent = el.parentNode;
+      if(!parent) return;
+      while(el.firstChild) parent.insertBefore(el.firstChild, el);
+      parent.removeChild(el);
+    });
+  });
+
+  // An <a> whose only content is a single <img> (a "click the thumbnail"
+  // link) is an inline element wrapping a block element. Browsers handle
+  // that inconsistently -- sometimes rendering it as a second column next
+  // to the image instead of stacking. We already attach click-to-navigate
+  // on every image in JS, so the wrapper is redundant: drop it.
+  doc.querySelectorAll("a").forEach(a=>{
+    const isImageOnly = a.children.length===1 && a.firstElementChild.tagName==="IMG" && a.textContent.trim()==="";
+    if(isImageOnly){
+      const parent = a.parentNode;
+      if(!parent) return;
+      while(a.firstChild) parent.insertBefore(a.firstChild, a);
+      parent.removeChild(a);
+    }
+  });
+
   doc.querySelectorAll("*").forEach(el=>{
     [...el.attributes].forEach(attr=>{
       const name = attr.name.toLowerCase();
       if(name.startsWith("on")) el.removeAttribute(attr.name);
       if((name==="href"||name==="src") && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
+      // inline style/align/valign are how source HTML floats images or
+      // forces a fixed small width -- strip so our single-column CSS wins.
+      if(name==="style" || name==="align" || name==="valign") el.removeAttribute(attr.name);
     });
+  });
+  doc.querySelectorAll("img").forEach(img=>{
+    img.removeAttribute("width");
+    img.removeAttribute("height");
   });
   return doc.body.innerHTML;
 }
@@ -692,21 +799,36 @@ function populateConfigForm(){
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
 
+  $("#cfg-folder-mode").value = CFG.folderMode;
+  $("#manual-folder-ui").classList.toggle("hidden", CFG.folderMode !== "manual");
+  renderFolderChips();
+
+  refreshStartupOptions();
+
+  updateCacheUsageDisplay();
+}
+
+/* Keeps the "startup screen" dropdown in sync with whichever feeds are
+   currently checked in the feed picker (if it's open), so a feed you just
+   added can be picked as the startup screen without having to save and
+   reopen Settings first. */
+function refreshStartupOptions(){
+  const source = feedPickerChoices
+    ? [...feedPickerChoices.values()].filter(f=>f.checked)
+    : CFG.selectedFeeds;
   const startupSel = $("#cfg-startup-mode");
+  const prevValue = startupSel.value || CFG.startupMode;
   startupSel.innerHTML = "";
   const optAll = document.createElement("option");
   optAll.value = "feedlist"; optAll.textContent = "Feed list";
   startupSel.appendChild(optAll);
-  CFG.selectedFeeds.forEach(f=>{
+  source.slice().sort((a,b)=>a.title.localeCompare(b.title)).forEach(f=>{
     const o = document.createElement("option");
     o.value = String(f.id); o.textContent = f.title;
     startupSel.appendChild(o);
   });
-  startupSel.value = CFG.startupMode;
-
-  cacheUsageBytes().then(bytes=>{
-    $("#cache-usage").textContent = (bytes/1048576).toFixed(1)+" MB";
-  });
+  const ok = [...startupSel.options].some(o=>o.value===String(prevValue));
+  startupSel.value = ok ? String(prevValue) : "feedlist";
 }
 
 $("#cfg-font-size").addEventListener("input", ()=>{
@@ -720,15 +842,60 @@ $("#preset-dark").addEventListener("click", ()=>{
   $("#cfg-bg").value = "#15171A"; $("#cfg-fg").value = "#E7E4DA";
 });
 
-let feedPickerChoices = null; // Map id -> {id,title,checked}
+$("#cfg-folder-mode").addEventListener("change", ()=>{
+  $("#manual-folder-ui").classList.toggle("hidden", $("#cfg-folder-mode").value !== "manual");
+  if(feedPickerChoices) renderFeedPicker();
+});
+$("#btn-add-folder").addEventListener("click", ()=>{
+  const name = $("#new-folder-name").value.trim();
+  if(!name) return;
+  CFG.folders = CFG.folders || [];
+  if(!CFG.folders.includes(name)) CFG.folders.push(name);
+  saveConfig(CFG);
+  $("#new-folder-name").value = "";
+  renderFolderChips();
+  if(feedPickerChoices) renderFeedPicker();
+});
+function renderFolderChips(){
+  const wrap = $("#folder-chip-list");
+  wrap.innerHTML = "";
+  (CFG.folders||[]).forEach(name=>{
+    const chip = document.createElement("button");
+    chip.type = "button"; chip.className = "chip";
+    chip.textContent = name + " \u00d7";
+    chip.title = "Remove folder";
+    chip.addEventListener("click", ()=>{
+      CFG.folders = CFG.folders.filter(n=>n!==name);
+      CFG.selectedFeeds.forEach(f=>{ if(f.folderName===name) f.folderName=null; });
+      if(feedPickerChoices){
+        feedPickerChoices.forEach(f=>{ if(f.folderName===name) f.folderName=null; });
+      }
+      saveConfig(CFG);
+      renderFolderChips();
+      if(feedPickerChoices) renderFeedPicker();
+      renderFeedList();
+    });
+    wrap.appendChild(chip);
+  });
+}
+
+let feedPickerChoices = null; // Map id -> {id,title,checked,categoryTitle,folderName}
 $("#btn-manage-feeds").addEventListener("click", async ()=>{
   const tmpCfg = {minifluxUrl:$("#cfg-mf-url").value, minifluxToken:$("#cfg-mf-token").value};
   const savedCfg = CFG; CFG = Object.assign({}, CFG, tmpCfg);
   try{
     const feeds = await mfGetFeeds();
     feedPickerChoices = new Map();
-    const selectedIds = new Set(CFG.selectedFeeds.map(f=>f.id));
-    feeds.forEach(f=>feedPickerChoices.set(f.id, {id:f.id, title:f.title, checked:selectedIds.has(f.id)}));
+    const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
+    feeds.forEach(f=>{
+      const prior = selectedById.get(f.id);
+      feedPickerChoices.set(f.id, {
+        id:f.id, title:f.title,
+        checked: selectedById.has(f.id),
+        categoryTitle: (f.category && f.category.title) || "Uncategorized",
+        folderName: prior ? (prior.folderName || null) : null
+      });
+    });
     renderFeedPicker();
     $("#feed-picker").classList.remove("hidden");
   }catch(e){
@@ -745,18 +912,38 @@ function renderFeedPicker(){
     row.className = "chk-row";
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = f.checked;
-    cb.addEventListener("change", ()=>{ f.checked = cb.checked; });
+    cb.addEventListener("change", ()=>{ f.checked = cb.checked; refreshStartupOptions(); });
     const lab = document.createElement("span"); lab.className = "grow"; lab.textContent = f.title;
     row.appendChild(cb); row.appendChild(lab);
+
+    if(CFG.folderMode === "manual"){
+      const sel = document.createElement("select");
+      sel.style.width = "auto"; sel.style.flex = "0 0 auto";
+      const noneOpt = document.createElement("option");
+      noneOpt.value = ""; noneOpt.textContent = "No folder";
+      sel.appendChild(noneOpt);
+      (CFG.folders||[]).forEach(name=>{
+        const o = document.createElement("option"); o.value = name; o.textContent = name;
+        sel.appendChild(o);
+      });
+      sel.value = f.folderName || "";
+      sel.addEventListener("change", ()=>{ f.folderName = sel.value || null; });
+      row.appendChild(sel);
+    }else if(CFG.folderMode === "miniflux"){
+      const cat = document.createElement("span");
+      cat.className = "muted"; cat.style.fontSize = "11px"; cat.style.flex = "0 0 auto";
+      cat.textContent = f.categoryTitle;
+      row.appendChild(cat);
+    }
     list.appendChild(row);
   });
+  refreshStartupOptions();
 }
 
 $("#btn-clear-cache").addEventListener("click", async ()=>{
-  await clearAllAssets();
-  objectUrlCache.clear();
-  toast("Image cache cleared");
-  cacheUsageBytes().then(b=>{ $("#cache-usage").textContent = (b/1048576).toFixed(1)+" MB"; });
+  await clearAllCachedData();
+  toast("All cached data cleared");
+  updateCacheUsageDisplay();
 });
 
 $("#btn-save-config").addEventListener("click", async ()=>{
@@ -778,10 +965,16 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
   CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
   CFG.startupMode = $("#cfg-startup-mode").value;
+  CFG.folderMode = $("#cfg-folder-mode").value;
 
   const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
   if(feedPickerChoices){
-    const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({id:f.id, title:f.title}));
+    const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({
+      id:f.id, title:f.title,
+      folderName: CFG.folderMode==="miniflux" ? (f.categoryTitle||null)
+                : CFG.folderMode==="manual" ? (f.folderName||null)
+                : null
+    }));
     const nowIds = new Set(nowSelected.map(f=>f.id));
     const removedIds = [...previouslySelected].filter(id=>!nowIds.has(id));
     CFG.selectedFeeds = nowSelected;
@@ -812,7 +1005,7 @@ async function syncFeed(feedId){
   const raw = await mfGetUnreadEntries(feedId, limit);
   const entries = (raw.entries||[]).map(e=>({
     id:e.id, feedId:e.feed_id, title:e.title, url:e.url,
-    content: sanitizeHtml(e.content),
+    content: e.content, // sanitized at render time, not here -- see openArticle()
     contentSize: (e.content||"").length,
     publishedAt: e.published_at,
     status: e.status,
@@ -860,25 +1053,47 @@ async function renderFeedList(){
   const cached = await idbGetAll("feedsCache");
   const byId = new Map(cached.map(c=>[c.id, c]));
   let rows = CFG.selectedFeeds.map(f=>({
-    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0
+    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0, folderName:f.folderName||null
   }));
-  rows.sort((a,b)=>{
-    let cmp = feedSort.field==="name" ? a.title.localeCompare(b.title) : a.unread-b.unread;
-    return feedSort.dir==="asc" ? cmp : -cmp;
-  });
   const container = $("#feed-list");
   container.innerHTML = "";
   if(rows.length===0){
     container.innerHTML = '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds from your Miniflux instance.</div>';
     return;
   }
-  rows.forEach(r=>{
+  const sortRows = arr => arr.sort((a,b)=>{
+    let cmp = feedSort.field==="name" ? a.title.localeCompare(b.title) : a.unread-b.unread;
+    return feedSort.dir==="asc" ? cmp : -cmp;
+  });
+  const renderRow = r=>{
     const div = document.createElement("div");
     div.className = "feed-row";
     div.innerHTML = `<span class="name">${escapeHtml(r.title)}</span><span class="badge mono-num">${r.unread}</span>`;
     div.addEventListener("click", ()=>openArticleList(r.id, r.title));
     container.appendChild(div);
-  });
+  };
+  if(CFG.folderMode === "none"){
+    sortRows(rows).forEach(renderRow);
+  }else{
+    const groups = new Map();
+    rows.forEach(r=>{
+      const key = r.folderName || "Unfiled";
+      if(!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    });
+    const groupNames = [...groups.keys()].sort((a,b)=>{
+      if(a==="Unfiled") return 1;
+      if(b==="Unfiled") return -1;
+      return a.localeCompare(b);
+    });
+    groupNames.forEach(name=>{
+      const header = document.createElement("div");
+      header.className = "feed-folder-header";
+      header.textContent = name;
+      container.appendChild(header);
+      sortRows(groups.get(name)).forEach(renderRow);
+    });
+  }
 }
 $("#feed-sort-field").addEventListener("change", e=>{ feedSort.field=e.target.value; renderFeedList(); });
 $("#feed-sort-dir").addEventListener("click", ()=>{
@@ -1039,7 +1254,7 @@ async function openArticle(entryId){
   $("#art-date").textContent = formatDate(entry.publishedAt);
 
   const contentDiv = $("#art-content");
-  contentDiv.innerHTML = entry.content || "";
+  contentDiv.innerHTML = sanitizeHtml(entry.content) || "";
   const linkTarget = findLinkTarget(contentDiv, entry);
 
   const inlineImgs = contentDiv.querySelectorAll("img");
