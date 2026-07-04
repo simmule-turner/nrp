@@ -336,6 +336,17 @@
       </fieldset>
 
       <fieldset>
+        <legend>Oversized Images</legend>
+        <p class="muted" style="font-size:11px; margin:0 0 .6em;">
+          Images larger than your max cached item size can't be stored in full, so they're re-fetched from the network each time they're shown. Thumbnails for these are still cached where possible. Listed here for visibility.
+        </p>
+        <div id="oversized-list" class="chk-list" style="max-height:200px;"></div>
+        <div class="row" style="margin-top:.6em;">
+          <button id="btn-clear-oversized" class="grow">Clear log</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend>Data &amp; Configuration</legend>
         <div class="row wrap">
           <button id="btn-export-cfg" class="grow">Export Options</button>
@@ -418,7 +429,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.4"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.5"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -592,7 +603,30 @@ async function getEntry(id){ return tx("entries","readonly", store=>reqp(store.g
 async function getEntriesByFeed(feedId){ return idbGetAll("entries","by_feed", feedId); }
 async function deleteEntries(ids){ return tx("entries","readwrite", store=>{ ids.forEach(id=>store.delete(id)); }); }
 
+/* ---- oversized image log (diagnostic; images too large to fit in the per-item cache cap) ---- */
+const OVERSIZED_LOG_KEY = "nrp_oversized_images";
+function loadOversizedLog(){
+  try{ return JSON.parse(localStorage.getItem(OVERSIZED_LOG_KEY) || "[]"); }catch(e){ return []; }
+}
+function saveOversizedLog(list){ localStorage.setItem(OVERSIZED_LOG_KEY, JSON.stringify(list)); }
+function recordOversizedImage(url, size){
+  let list = loadOversizedLog();
+  const existing = list.find(i=>i.url===url);
+  if(existing){ existing.size = size; existing.lastSeen = Date.now(); }
+  else list.push({url, size, lastSeen: Date.now()});
+  if(list.length > 200) list = list.slice(-200); // cap unbounded growth
+  saveOversizedLog(list);
+}
+
 /* ---- assets (image cache) ---- */
+const objectUrlCache = new Map();
+function revokeObjectUrlFor(url){
+  if(objectUrlCache.has(url)){
+    try{ URL.revokeObjectURL(objectUrlCache.get(url)); }catch(e){}
+    objectUrlCache.delete(url);
+  }
+}
+
 async function cacheUsageBytes(){
   const all = await idbGetAll("assets");
   return all.reduce((sum,a)=>sum+(a.size||0), 0);
@@ -605,13 +639,18 @@ async function evictLru(neededBytes){
   while(used + neededBytes > CFG.cacheSizeLimit && i < all.length){
     const victim = all[i++];
     await tx("assets","readwrite", store=>store.delete(victim.url));
+    revokeObjectUrlFor(victim.url);
     used -= victim.size||0;
   }
 }
 async function getCachedAsset(url){ return tx("assets","readonly", store=>reqp(store.get(url))); }
 async function storeAsset(url, blob){
   const maxBytes = CFG.maxItemSizeMB * 1024 * 1024;
-  if(blob.size > maxBytes) throw new Error("item exceeds max cache item size");
+  if(blob.size > maxBytes){
+    const err = new Error("item exceeds max cache item size");
+    err.tooLarge = true; err.size = blob.size;
+    throw err;
+  }
   await evictLru(blob.size);
   const rec = {url, blob, size:blob.size, lastAccessed:Date.now(), protectedFlag:false};
   await tx("assets","readwrite", store=>store.put(rec));
@@ -637,13 +676,12 @@ async function clearAllCachedData(){
   await tx("assets","readwrite", store=>store.clear());
   await tx("outbox","readwrite", store=>store.clear());
   await tx("feedsCache","readwrite", store=>store.clear());
+  for(const url of [...objectUrlCache.keys()]) revokeObjectUrlFor(url);
   objectUrlCache.clear();
 }
 function updateCacheUsageDisplay(){
   cacheStats().then(s=>{ $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`; });
 }
-
-const objectUrlCache = new Map();
 
 async function generateThumbnailBlob(srcObjUrl, maxSize) {
   return new Promise((resolve, reject) => {
@@ -675,25 +713,59 @@ async function resolveThumbnailSrc(url){
     return obj;
   }
 
-  // Ensures the full-res image is cached, but only fetches over the network if it isn't already.
-  const fullSrc = await resolveImageSrc(url);
+  // Reuse a cached full-res blob if we have one; otherwise fetch fresh bytes just for
+  // thumbnailing. This means an oversized original that can't be cached whole can still
+  // yield a small, cacheable thumbnail - we don't require the full image to be stored first.
+  let sourceBlob = null;
   const fullRec = await getCachedAsset(url);
-  if(!fullRec || !fullRec.blob){
-    // No usable local blob (e.g. blocked by CORS) - nothing to downscale, nothing worth persisting.
-    return fullSrc;
+  if(fullRec && fullRec.blob){
+    touchAsset(url);
+    sourceBlob = fullRec.blob;
+  }else{
+    try{
+      const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+      if(resp.ok) sourceBlob = await resp.blob();
+    }catch(e){ }
   }
 
-  try {
-    let thumbBlob = await generateThumbnailBlob(fullSrc, 144);
-    if(!thumbBlob) thumbBlob = fullRec.blob; // already small enough - reuse it so we don't redo this work every time
-    await storeAsset(thumbKey, thumbBlob);
-    const obj = URL.createObjectURL(thumbBlob);
-    objectUrlCache.set(thumbKey, obj);
-    return obj;
-  } catch(e) {
-    return fullSrc;
+  if(!sourceBlob){
+    // Couldn't read bytes directly (e.g. CORS-opaque response) - nothing to thumbnail from
+    // locally. Let the background opaque-cache path (rate-limited) keep trying.
+    cacheOpaqueInBackground(url);
+    return url;
+  }
+
+  const sourceObjUrl = URL.createObjectURL(sourceBlob);
+  try{
+    let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
+    if(!thumbBlob) thumbBlob = sourceBlob; // already small enough - reuse as-is, no resize needed
+
+    if(!fullRec){
+      // Opportunistically persist the full-res copy too, for the enclosure/article view.
+      // If it's too big to fit under the per-item cap, log it and move on - the thumbnail
+      // below is generated independently and isn't blocked by this.
+      await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
+    }
+
+    let thumbObj;
+    try{
+      await storeAsset(thumbKey, thumbBlob);
+      thumbObj = URL.createObjectURL(thumbBlob);
+    }catch(err){
+      // Thumbnail itself exceeded the cap (unlikely, but possible with a tiny cap) - still
+      // show it for this session, just don't persist it.
+      if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size);
+      thumbObj = URL.createObjectURL(thumbBlob);
+    }
+    objectUrlCache.set(thumbKey, thumbObj);
+    return thumbObj;
+  }catch(e){
+    return url;
+  }finally{
+    URL.revokeObjectURL(sourceObjUrl);
   }
 }
+
 async function resolveImageSrc(url){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
@@ -708,7 +780,7 @@ async function resolveImageSrc(url){
     const resp = await fetch(url, {referrerPolicy:"no-referrer"});
     if(resp.ok){
       const blob = await resp.blob();
-      try{ await storeAsset(url, blob); }catch(storeErr){ }
+      try{ await storeAsset(url, blob); }catch(storeErr){ if(storeErr && storeErr.tooLarge) recordOversizedImage(url, storeErr.size); }
       const obj = URL.createObjectURL(blob);
       objectUrlCache.set(url, obj);
       return obj;
@@ -730,7 +802,7 @@ function cacheOpaqueInBackground(url){
   startBgTask();
   fetch(url, {mode:"no-cors", referrerPolicy:"no-referrer"})
     .then(resp=>resp.blob())
-    .then(blob=>{ if(blob && blob.size>0) return storeAsset(url, blob).catch(()=>{}); })
+    .then(blob=>{ if(blob && blob.size>0) return storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); }); })
     .catch(()=>{})
     .finally(endBgTask);
 }
@@ -753,7 +825,7 @@ async function prefetchImagesForEntry(entry){
         const resp = await fetch(url, {referrerPolicy:"no-referrer"});
         if(resp.ok){
           const blob = await resp.blob();
-          await storeAsset(url, blob).catch(()=>{});
+          await storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
           continue;
         }
       }catch(e){ }
@@ -810,6 +882,7 @@ async function gcOrphanImages(){
   for(const a of assets){
     if(!a.protectedFlag && !referenced.has(a.url)){
       await tx("assets","readwrite", store=>store.delete(a.url));
+      revokeObjectUrlFor(a.url);
     }
   }
 }
@@ -1166,13 +1239,20 @@ function navigate(id, opts){
   if(currentScreen) navStack.push({id:currentScreen, opts:lastOpts});
   lastOpts = opts; showScreen(id, opts);
 }
+function updateScreen(id, opts){ // like navigate(), but doesn't touch the back-history stack
+  lastOpts = opts; showScreen(id, opts);
+}
 let lastOpts = {};
 $("#btn-back").addEventListener("click", ()=>{
   const prev = navStack.pop();
   if(prev){ lastOpts = prev.opts; showScreen(prev.id, prev.opts); }
 });
 $("#btn-config").addEventListener("click", ()=>{
-  if(currentScreen !== "screen-config") navigate("screen-config", {title:"Settings"});
+  if(currentScreen !== "screen-config"){
+    navigate("screen-config", {title:"Settings"});
+    renderOversizedLog();
+    updateCacheUsageDisplay();
+  }
 });
 
 let toastTimer = null;
@@ -1213,6 +1293,7 @@ function populateConfigForm(){
 
   refreshStartupOptions();
   updateCacheUsageDisplay();
+  renderOversizedLog();
 }
 
 /* Accounts Management UI */
@@ -1483,6 +1564,33 @@ $("#btn-clear-cache").addEventListener("click", async ()=>{
   await clearAllCachedData();
   toast("All cached data cleared");
   updateCacheUsageDisplay();
+});
+
+/* Oversized image log UI */
+function renderOversizedLog(){
+  const list = loadOversizedLog();
+  const container = $("#oversized-list");
+  container.innerHTML = "";
+  if(list.length === 0){
+    container.innerHTML = '<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">None</div></div>';
+    return;
+  }
+  list.slice().sort((a,b)=>b.size-a.size).forEach(item=>{
+    const row = document.createElement("div");
+    row.className = "chk-row";
+    const sizeMb = (item.size/1048576).toFixed(2);
+    const seen = new Date(item.lastSeen).toLocaleString();
+    row.innerHTML = `<div class="grow" style="min-width:0;">
+      <div style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.url)}</div>
+      <div class="muted" style="font-size:10px;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
+    </div>`;
+    container.appendChild(row);
+  });
+}
+$("#btn-clear-oversized").addEventListener("click", ()=>{
+  saveOversizedLog([]);
+  renderOversizedLog();
+  toast("Oversized image log cleared");
 });
 
 /* Import / Export Options */
@@ -1798,10 +1906,6 @@ function findLinkTarget(contentDiv, entry){
   return entry.enclosureUrl || null;
 }
 
-function updateScreen(id, opts){ // like navigate(), but doesn't touch history
-  lastOpts = opts; showScreen(id, opts);
-}
-
 async function openArticle(entryId, opts){
   opts = opts || {};
   const entry = await getEntry(entryId);
@@ -1822,12 +1926,15 @@ async function openArticle(entryId, opts){
   wbBtn.addEventListener("click", ()=>sendToWallabag());
 
   const nextBtn = document.createElement("button");
-  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}";
+  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}"; 
   nextBtn.addEventListener("click", ()=>nextArticle());
 
   const screenOpts = {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
   if(opts.replace){
+    // Refreshing content on the screen we're already on (star toggle, next article) - don't
+    // push a duplicate history entry, or Back ends up walking through stale article states.
     updateScreen("screen-article", screenOpts);
+    if(!opts.keepScroll) $("#screen-article").scrollTop = 0;
   }else{
     navigate("screen-article", screenOpts);
     $("#screen-article").scrollTop = 0;
@@ -1865,7 +1972,7 @@ function nextArticle(){
   if(!currentEntry || lastArticleOrder.length===0) return;
   const idx = lastArticleOrder.indexOf(currentEntry.id);
   if(idx === -1 || idx === lastArticleOrder.length-1){ toast("No more articles in this list"); return; }
-  openArticle(lastArticleOrder[idx+1], {replace:true});
+  openArticle(lastArticleOrder[idx+1], {replace:true}); // new content - reset scroll to top
 }
 
 async function markRead(entry){
@@ -1895,7 +2002,7 @@ async function toggleStar(){
     const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
     if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred); 
   } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred: currentEntry.starred}); }
-  openArticle(currentEntry.id, {replace:true});
+  openArticle(currentEntry.id, {replace:true, keepScroll:true}); // same article - stay where the user was reading
 }
 async function sendToWallabag(){
   if(!currentEntry) return;
