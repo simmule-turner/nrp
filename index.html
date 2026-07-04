@@ -34,6 +34,7 @@
   }
   button:active{ transform:translateY(1px); }
   button.primary{ background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:700; }
+  button.danger{ color:var(--danger); border-color:var(--danger); background:transparent; }
   button.icon{
     width:44px; height:44px; font-size:1.75em;
     display:inline-flex; align-items:center; justify-content:center; padding:0;
@@ -146,6 +147,12 @@
   body.toolbar-bottom .toast {
     bottom: 4.5em; /* Shift toast above the bottom toolbar */
   }
+
+  /* Account Management */
+  .account-item { display:flex; justify-content:space-between; align-items:center; padding:.5em .7em; background:var(--raised); border:1px solid var(--border); border-radius:3px; margin-bottom:.5em; }
+  .account-item .info { flex:1; }
+  .account-item .info strong { display:block; font-size:14px; }
+  .account-item .info span { font-size:12px; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -162,14 +169,43 @@
     <div class="pad">
 
       <fieldset>
-        <legend>Miniflux</legend>
-        <label for="cfg-mf-url">Server URL</label>
-        <input id="cfg-mf-url" type="url" placeholder="https://miniflux.example.com">
-        <label for="cfg-mf-token">API token</label>
-        <input id="cfg-mf-token" type="password" placeholder="Miniflux API token">
-        <label for="cfg-mf-max">Max items per feed / sync</label>
-        <input id="cfg-mf-max" type="number" min="1" step="1" value="50">
-        <div class="row" style="margin-top:.9em;">
+        <legend>Reader Accounts</legend>
+        <div id="cfg-accounts-list"></div>
+        <button id="btn-add-account" class="chip" style="margin-top:.4em;">+ Add Account</button>
+
+        <div id="account-form" class="hidden" style="margin-top:1.2em; padding-top:1em; border-top:1px solid var(--border);">
+          <input type="hidden" id="acc-form-id">
+          <label for="acc-type">Type</label>
+          <select id="acc-type">
+            <option value="miniflux">Miniflux</option>
+            <option value="newsblur">NewsBlur</option>
+          </select>
+          <label for="acc-name">Account Name</label>
+          <input id="acc-name" type="text" placeholder="e.g. My RSS Server">
+          <label for="acc-url">Server URL</label>
+          <input id="acc-url" type="url" placeholder="https://...">
+          
+          <div id="acc-mf-fields">
+            <label for="acc-token">API Token</label>
+            <input id="acc-token" type="password">
+          </div>
+          <div id="acc-nb-fields" class="hidden">
+            <label for="acc-user">Username</label>
+            <input id="acc-user" type="text">
+            <label for="acc-pass">Password</label>
+            <input id="acc-pass" type="password">
+          </div>
+
+          <label for="acc-max">Max items per feed / sync</label>
+          <input id="acc-max" type="number" min="1" step="1" value="50">
+          
+          <div class="row wrap" style="margin-top:1em;">
+            <button id="btn-save-account" class="primary grow">Save Account</button>
+            <button id="btn-cancel-account" class="grow">Cancel</button>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:1.2em;">
           <button id="btn-manage-feeds" class="grow">Manage feeds&hellip;</button>
         </div>
         <div id="feed-picker" class="hidden" style="margin-top:.8em;">
@@ -183,7 +219,7 @@
         <select id="cfg-folder-mode">
           <option value="none">No folders (flat list)</option>
           <option value="manual">Manual folders</option>
-          <option value="miniflux">Mirror Miniflux categories</option>
+          <option value="miniflux">Mirror service categories</option>
         </select>
         <div id="manual-folder-ui" class="hidden" style="margin-top:.8em;">
           <div class="row">
@@ -364,7 +400,7 @@
 /* ============================= CONFIG ============================= */
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
-  minifluxUrl:"", minifluxToken:"", minifluxMaxItems:50,
+  accounts: [], 
   wallabagUrl:"", wallabagClientId:"", wallabagClientSecret:"",
   wallabagUsername:"", wallabagPassword:"",
   wallabagAccessToken:null, wallabagRefreshToken:null, wallabagTokenExpiry:0,
@@ -378,7 +414,7 @@ const DEFAULT_CFG = {
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   folderMode:"none", folders:[],
   toolbarPlacement: "top",
-  selectedFeeds:[] // [{id,title,folderName}]
+  selectedFeeds:[] // [{id: accountId___feedId, accountId, title, folderName}]
 };
 
 function loadConfig(){
@@ -392,6 +428,27 @@ function loadConfig(){
       parsed.lightBg = parsed.bgColor;
       parsed.lightFg = parsed.fgColor;
     }
+
+    // Migration for moving from hardcoded miniflux to accounts array
+    if(parsed.minifluxUrl && (!parsed.accounts || parsed.accounts.length === 0)) {
+      const accId = "default_mf";
+      parsed.accounts = [{
+        id: accId,
+        type: "miniflux",
+        name: "Miniflux",
+        url: parsed.minifluxUrl,
+        token: parsed.minifluxToken,
+        maxItems: parsed.minifluxMaxItems || 50
+      }];
+      if (parsed.selectedFeeds) {
+        parsed.selectedFeeds.forEach(f => {
+          f.accountId = accId;
+          f.rawId = f.id;
+          f.id = accId + "___" + f.id;
+        });
+      }
+      delete parsed.minifluxUrl; delete parsed.minifluxToken; delete parsed.minifluxMaxItems;
+    }
     
     return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
@@ -399,20 +456,25 @@ function loadConfig(){
 function saveConfig(cfg){ localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
 let CFG = loadConfig();
 
-function applyTheme(){
+function getActiveColors() {
   let isDark = CFG.themeMode === "dark";
   if (CFG.themeMode === "system") {
     isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
-  const bg = isDark ? CFG.darkBg : CFG.lightBg;
-  const fg = isDark ? CFG.darkFg : CFG.lightFg;
+  return {
+    bg: isDark ? CFG.darkBg : CFG.lightBg,
+    fg: isDark ? CFG.darkFg : CFG.lightFg
+  };
+}
 
-  document.documentElement.style.setProperty("--bg", bg);
-  document.documentElement.style.setProperty("--fg", fg);
+function applyTheme(){
+  const colors = getActiveColors();
+  document.documentElement.style.setProperty("--bg", colors.bg);
+  document.documentElement.style.setProperty("--fg", colors.fg);
   document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
   document.documentElement.style.setProperty("--fs-base", (CFG.fontSize||16)+"px");
   const meta = document.querySelector('meta[name="theme-color"]');
-  if(meta) meta.setAttribute("content", bg);
+  if(meta) meta.setAttribute("content", colors.bg);
   document.body.classList.toggle("toolbar-bottom", CFG.toolbarPlacement === "bottom");
 }
 
@@ -421,7 +483,6 @@ if (window.matchMedia) {
     if (CFG.themeMode === 'system') applyTheme();
   });
 }
-
 
 /* ============================= MANIFEST / ICON ============================= */
 function buildIconDataUri(){
@@ -435,10 +496,11 @@ function buildIconDataUri(){
 }
 function setupManifest(){
   const icon = buildIconDataUri();
+  const colors = getActiveColors();
   const manifest = {
     name:"NRP News Reader", short_name:"NRP",
     start_url:"./index.html", scope:"./",
-    display:"standalone", background_color:CFG.lightBg, theme_color:CFG.lightBg,
+    display:"standalone", background_color:colors.bg, theme_color:colors.bg,
     icons:[
       {src:icon, sizes:"192x192", type:"image/svg+xml", purpose:"any"},
       {src:icon, sizes:"512x512", type:"image/svg+xml", purpose:"any"}
@@ -504,17 +566,10 @@ async function idbGetAll(storeName, indexName, query){
 }
 
 /* ---- entries ---- */
-async function putEntries(list){
-  return tx("entries", "readwrite", store=>{
-    list.forEach(e=>store.put(e));
-  });
-}
+async function putEntries(list){ return tx("entries", "readwrite", store=>{ list.forEach(e=>store.put(e)); }); }
 async function getEntry(id){ return tx("entries","readonly", store=>reqp(store.get(id))); }
 async function getEntriesByFeed(feedId){ return idbGetAll("entries","by_feed", feedId); }
-async function getStarredEntries(){ return idbGetAll("entries","by_starred", true); }
-async function deleteEntries(ids){
-  return tx("entries","readwrite", store=>{ ids.forEach(id=>store.delete(id)); });
-}
+async function deleteEntries(ids){ return tx("entries","readwrite", store=>{ ids.forEach(id=>store.delete(id)); }); }
 
 /* ---- assets (image cache) ---- */
 async function cacheUsageBytes(){
@@ -556,10 +611,6 @@ async function cacheStats(){
   return {imageCount:assets.length, imageBytes:bytes, articleCount:entries.length};
 }
 
-/* Full reset: wipes every locally cached article, image, and pending sync
-   action. Deliberately leaves CFG.selectedFeeds (and all other settings)
-   untouched in localStorage, so the app looks exactly like it does right
-   after picking feeds for the first time -- the next sync repopulates it. */
 async function clearAllCachedData(){
   await tx("entries","readwrite", store=>store.clear());
   await tx("assets","readwrite", store=>store.clear());
@@ -568,36 +619,27 @@ async function clearAllCachedData(){
   objectUrlCache.clear();
 }
 function updateCacheUsageDisplay(){
-  cacheStats().then(s=>{
-    $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`;
-  });
+  cacheStats().then(s=>{ $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`; });
 }
 
 const objectUrlCache = new Map();
 
-/* Thumbnail Generation */
 async function generateThumbnailBlob(srcObjUrl, maxSize) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       let w = img.width, h = img.height;
-      if (w <= maxSize && h <= maxSize) {
-        resolve(null); // Signal that it's small enough to just use original
-        return;
-      }
+      if (w <= maxSize && h <= maxSize) { resolve(null); return; }
       const scale = maxSize / Math.max(w, h); 
       const canvas = document.createElement('canvas');
-      canvas.width = w * scale;
-      canvas.height = h * scale;
+      canvas.width = w * scale; canvas.height = h * scale;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.8);
     };
-    img.onerror = reject;
-    img.src = srcObjUrl;
+    img.onerror = reject; img.src = srcObjUrl;
   });
 }
-
 async function resolveThumbnailSrc(url){
   if(!url) return url;
   const thumbKey = "thumb_" + url;
@@ -612,9 +654,7 @@ async function resolveThumbnailSrc(url){
   }
 
   const fullSrc = await resolveImageSrc(url);
-  if (fullSrc === url) {
-    return url;
-  }
+  if (fullSrc === url) return url;
   
   try {
     const thumbBlob = await generateThumbnailBlob(fullSrc, 144);
@@ -629,8 +669,6 @@ async function resolveThumbnailSrc(url){
   return fullSrc;
 }
 
-/* Resolve an <img> src through the cache. Fetches original only on a cache
-   miss or a failed cache write, per spec. */
 async function resolveImageSrc(url){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
@@ -642,8 +680,6 @@ async function resolveImageSrc(url){
     return obj;
   }
   try{
-    // Prefer a normal, readable fetch -- this is the only kind of response we
-    // can verify actually succeeded and can safely both cache and display.
     const resp = await fetch(url, {referrerPolicy:"no-referrer"});
     if(resp.ok){
       const blob = await resp.blob();
@@ -652,14 +688,8 @@ async function resolveImageSrc(url){
       objectUrlCache.set(url, obj);
       return obj;
     }
-  }catch(e){ /* likely CORS-blocked -- fall through to opaque attempt */ }
+  }catch(e){ }
 
-  // Can't get a verifiable response (CORS-blocked). An opaque no-cors blob
-  // can't be checked for success/failure, so showing it risks displaying a
-  // broken image with no way to tell. Show the original URL directly
-  // instead -- browsers can load cross-origin images without CORS, so this
-  // reliably renders -- and try to warm the cache in the background without
-  // it affecting what's on screen right now.
   cacheOpaqueInBackground(url);
   return url;
 }
@@ -673,10 +703,8 @@ function cacheOpaqueInBackground(url){
 
 function extractImageUrls(html){
   if(!html) return [];
-  const out = [];
-  const re = /<img[^>]+src=["']([^"']+)["']/gi;
-  let m;
-  while((m = re.exec(html))) out.push(m[1]);
+  const out = []; const re = /<img[^>]+src=["']([^"']+)["']/gi;
+  let m; while((m = re.exec(html))) out.push(m[1]);
   return out;
 }
 async function prefetchImagesForEntry(entry){
@@ -703,30 +731,31 @@ async function setProtection(entry, protectedFlag){
   const allUrls = [];
   urls.forEach(u=>{ allUrls.push(u); allUrls.push("thumb_"+u); });
 
+  let starred = [];
+  if (!protectedFlag) starred = await idbGetAll("entries","by_starred", true);
+
   for(const url of allUrls){
     await tx("assets","readwrite", store=>{
       const req = store.get(url);
       req.onsuccess = ()=>{
         const rec = req.result;
         if(!rec) return;
-        if(protectedFlag){ rec.protectedFlag = true; store.put(rec); }
-        else{
-          idbGetAll("entries","by_starred", true).then(starred=>{
-            let stillNeeded = false;
-            for(const e of starred){
-               if(e.id === entry.id) continue;
-               const thisUrls = extractImageUrls(e.content);
-               if(e.enclosureUrl) thisUrls.push(e.enclosureUrl);
-               if(thisUrls.includes(url) || thisUrls.some(u=> "thumb_"+u === url)){
-                  stillNeeded = true;
-                  break;
-               }
-            }
-            if(!stillNeeded){ 
-               // only clear protection if no other starred entry still needs it
-               rec.protectedFlag = false; store.put(rec); 
-            }
-          });
+        if(protectedFlag){ 
+          rec.protectedFlag = true; store.put(rec); 
+        } else {
+          let stillNeeded = false;
+          for(const e of starred){
+             if(e.id === entry.id) continue;
+             const thisUrls = extractImageUrls(e.content);
+             if(e.enclosureUrl) thisUrls.push(e.enclosureUrl);
+             if(thisUrls.includes(url) || thisUrls.some(u=> "thumb_"+u === url)){
+                stillNeeded = true;
+                break;
+             }
+          }
+          if(!stillNeeded){ 
+             rec.protectedFlag = false; store.put(rec); 
+          }
         }
       };
     });
@@ -756,10 +785,12 @@ async function processOutbox(){
   items.sort((a,b)=>a.seq-b.seq);
   for(const item of items){
     try{
-      if(item.type === "mark-status"){
-        await mfMarkStatus(item.entryIds, item.status);
-      }else if(item.type === "toggle-star"){
-        await mfToggleBookmark(item.entryId);
+      const account = CFG.accounts.find(a => a.id === item.accountId);
+      
+      if(item.type === "mark-status" && account){
+        await apiMarkStatus(account, item.rawIds, item.status, item.rawFeedId);
+      }else if(item.type === "toggle-star" && account){
+        await apiToggleBookmark(account, item.rawId, item.rawFeedId, item.isStarred);
       }else if(item.type === "wallabag-save"){
         await wbSaveEntry(item.title, item.content, item.url);
       }
@@ -769,28 +800,276 @@ async function processOutbox(){
 }
 window.addEventListener("online", ()=>{ processOutbox(); });
 
+/* ============================= API ABSTRACTIONS ============================= */
+
+async function apiGetFeeds(account) {
+  if (account.type === 'miniflux') return mfGetFeeds(account);
+  if (account.type === 'newsblur') return nbGetFeeds(account);
+  throw new Error("Unknown account type");
+}
+async function apiGetCounters(account) {
+  if (account.type === 'miniflux') return mfGetCounters(account);
+  if (account.type === 'newsblur') return nbGetCounters(account);
+  throw new Error("Unknown account type");
+}
+async function apiGetUnreadEntries(account, rawFeedId) {
+  if (account.type === 'miniflux') return mfGetUnreadEntries(account, rawFeedId);
+  if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId);
+  throw new Error("Unknown account type");
+}
+async function apiMarkStatus(account, rawEntryIds, status, rawFeedId) {
+  if (account.type === 'miniflux') return mfMarkStatus(account, rawEntryIds, status);
+  if (account.type === 'newsblur') return nbMarkStatus(account, rawEntryIds, status, rawFeedId);
+  throw new Error("Unknown account type");
+}
+async function apiToggleBookmark(account, rawEntryId, rawFeedId, isStarred) {
+  if (account.type === 'miniflux') return mfToggleBookmark(account, rawEntryId);
+  if (account.type === 'newsblur') return nbToggleBookmark(account, rawEntryId, rawFeedId, isStarred);
+  throw new Error("Unknown account type");
+}
+
 /* ============================= MINIFLUX API ============================= */
-function mfBase(){ return (CFG.minifluxUrl||"").replace(/\/+$/,""); }
-async function mfFetch(path, opts){
+function mfBase(account){ return (account.url||"").replace(/\/+$/,""); }
+async function mfFetch(account, path, opts){
   opts = opts || {};
-  const headers = Object.assign({"X-Auth-Token":CFG.minifluxToken}, opts.headers||{});
+  const headers = Object.assign({"X-Auth-Token":account.token}, opts.headers||{});
   if(opts.body) headers["Content-Type"] = "application/json";
-  const resp = await fetch(mfBase()+path, Object.assign({}, opts, {headers}));
+  const resp = await fetch(mfBase(account)+path, Object.assign({}, opts, {headers}));
   if(!resp.ok) throw new Error("Miniflux "+resp.status+" "+path);
   if(resp.status === 204) return null;
   return resp.json();
 }
-async function mfGetFeeds(){ return mfFetch("/v1/feeds"); }
-async function mfGetCounters(){ return mfFetch("/v1/feeds/counters"); }
-async function mfGetUnreadEntries(feedId, limit){
-  const q = `/v1/feeds/${feedId}/entries?status=unread&limit=${limit}&order=published_at&direction=desc`;
-  return mfFetch(q);
+async function mfGetFeeds(account){
+  const feeds = await mfFetch(account, "/v1/feeds");
+  return feeds.map(f => ({
+    id: String(f.id), title: f.title, categoryTitle: (f.category && f.category.title) || "Uncategorized"
+  }));
 }
-async function mfMarkStatus(entryIds, status){
-  return mfFetch("/v1/entries", {method:"PUT", body:JSON.stringify({entry_ids:entryIds, status})});
+async function mfGetCounters(account){ 
+  const c = await mfFetch(account, "/v1/feeds/counters");
+  return c.unreads || {};
 }
-async function mfToggleBookmark(entryId){
-  return mfFetch(`/v1/entries/${entryId}/bookmark`, {method:"PUT"});
+async function mfGetUnreadEntries(account, feedId){
+  const q = `/v1/feeds/${feedId}/entries?status=unread&limit=${account.maxItems}&order=published_at&direction=desc`;
+  const raw = await mfFetch(account, q);
+  return (raw.entries || []).map(e => ({
+    id: account.id + "___" + e.id,
+    rawId: String(e.id),
+    feedId: account.id + "___" + e.feed_id,
+    rawFeedId: String(e.feed_id),
+    accountId: account.id,
+    title: e.title, url: e.url, content: e.content,
+    contentSize: (e.content||"").length,
+    publishedAt: e.published_at,
+    status: e.status, starred: !!e.starred,
+    enclosureUrl: (e.enclosures && e.enclosures[0]) ? e.enclosures[0].url : null,
+    feedTitle: (e.feed && e.feed.title) || null
+  }));
+}
+async function mfMarkStatus(account, entryIds, status){
+  return mfFetch(account, "/v1/entries", {method:"PUT", body:JSON.stringify({entry_ids:entryIds.map(i=>Number(i)), status})});
+}
+async function mfToggleBookmark(account, entryId){
+  return mfFetch(account, `/v1/entries/${Number(entryId)}/bookmark`, {method:"PUT"});
+}
+
+/* ============================= NEWSBLUR API ============================= */
+
+async function loginToNewsBlur(account) {
+  // If a login is already in progress, wait for it
+  if (NB_STATE.isLoggingIn) return NB_STATE.isLoggingIn;
+
+  NB_STATE.isLoggingIn = (async () => {
+    const loginData = new URLSearchParams();
+    loginData.append("username", account.username);
+    loginData.append("password", account.password);
+
+    const res = await fetch(account.url + "/api/login", {
+      method: "POST",
+      body: loginData,
+      credentials: "include" // Browser saves the session cookie here
+    });
+
+    const json = await res.json();
+    NB_STATE.isAuthenticated = json.authenticated === true;
+    NB_STATE.isLoggingIn = null;
+    return NB_STATE.isAuthenticated;
+  })();
+
+  return NB_STATE.isLoggingIn;
+}
+
+/* ============================= NEWSBLUR API ============================= */
+const NB_STATE = {
+    isAuthenticated: false,
+    isLoggingIn: null,
+    feeds: [] // Your local feed cache
+};
+
+// Simplified login workflow: credentials are now verified on-the-fly by the proxy on every fetch
+async function loginToNewsBlur(account) {
+    if (NB_STATE.isLoggingIn) return NB_STATE.isLoggingIn;
+    
+    NB_STATE.isLoggingIn = (async () => {
+        // Validate locally that credentials exist before trying to use the proxy gateway
+        if (account.username && account.password) {
+            NB_STATE.isAuthenticated = true;
+        } else {
+            NB_STATE.isAuthenticated = false;
+            console.error("[NewsBlur API] Missing username or password configurations.");
+        }
+        NB_STATE.isLoggingIn = null;
+        return NB_STATE.isAuthenticated;
+    })();
+    
+    return NB_STATE.isLoggingIn;
+}
+
+// 1. CLEAR FEED LIST
+function clearFeeds() {
+    console.log("Clearing feed cache...");
+    NB_STATE.feeds = [];
+    // If you are using a UI framework, trigger your state update here
+}
+
+// 2. CORE FETCHING MECHANISM WITH PROXY ENHANCEMENT
+async function nbFetch(account, path, opts = {}) {
+    // Proactive local authentication state validation check
+    if (!NB_STATE.isAuthenticated) {
+        await loginToNewsBlur(account);
+    }
+
+    // Set up standard headers required to securely interact with the Python CORS Proxy
+    const headers = {
+        'Accept': 'application/json',
+        'X-NB-User': account.username,
+        'X-NB-Pass': account.password
+    };
+
+    // Keep existing Content-Type headers if they were set up for a POST payload body
+    if (opts.headers && opts.headers['Content-Type']) {
+        headers['Content-Type'] = opts.headers['Content-Type'];
+    }
+
+    const fetchOptions = {
+        ...opts,
+        headers: headers
+        // NOTE: credentials: "include" is deleted because the proxy uses custom authentication headers!
+    };
+
+    try {
+        // account.url must point directly to your Python proxy (e.g., "http://localhost:8080")
+        const res = await fetch(account.url + path, fetchOptions);
+        
+        console.debug(`[NewsBlur API via Proxy] ${path} -> Status: ${res.status}`);
+        
+        if (res.status === 401 || res.status === 403) {
+            NB_STATE.isAuthenticated = false; // Reset local auth state if proxy flags credentials
+            throw new Error("Authentication failed or session expired (Unauthorized/Forbidden)");
+        }
+        if (!res.ok) {
+            throw new Error(`HTTP Error: ${res.status} ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        return data;
+    } catch (error) {
+        console.error(`[NewsBlur API Error] Path: ${path}`, error);
+        return { error: true, message: error.message, feeds: [] };
+    }
+}
+
+async function nbGetFeeds(account){
+    const res = await nbFetch(account, "/reader/feeds");
+    const out = [];
+    const catMap = {};
+    
+    const parseFolders = (list, catName) => {
+        for(const item of list) {
+            if(typeof item === 'number' || typeof item === 'string') catMap[item] = catName;
+            else if(typeof item === 'object') {
+                for(const k in item) parseFolders(item[k], k);
+            }
+        }
+    };
+    
+    if(res.folders) parseFolders(res.folders, "Uncategorized");
+    
+    for (const id in res.feeds) {
+        const f = res.feeds[id];
+        if(!f.active) continue;
+        out.push({
+            id: String(id),
+            title: f.feed_title,
+            categoryTitle: catMap[id] || "Uncategorized"
+        });
+    }
+    return out;
+}
+
+async function nbGetCounters(account){
+    const res = await nbFetch(account, "/reader/refresh_feeds");
+    const counts = {};
+    for (const id in res.feeds) {
+        counts[id] = (res.feeds[id].nt || 0) + (res.feeds[id].ps || 0);
+    }
+    return counts;
+}
+
+async function nbGetUnreadEntries(account, feedId){
+    const res = await nbFetch(account, `/reader/feed/${feedId}?read_filter=unread&limit=${account.maxItems}`);
+    const entries = res.stories || [];
+    return entries.map(s => ({
+        id: account.id + "___" + s.story_hash,
+        rawId: s.story_hash,
+        feedId: account.id + "___" + feedId,
+        rawFeedId: String(feedId),
+        accountId: account.id,
+        title: s.story_title,
+        url: s.story_permalink,
+        content: s.story_content || s.story_content_z || "",
+        contentSize: (s.story_content || s.story_content_z || "").length,
+        publishedAt: s.story_date,
+        status: "unread",
+        starred: s.starred ? true : false,
+        enclosureUrl: s.image_urls && s.image_urls.length ? s.image_urls[0] : null,
+        feedTitle: res.feeds && res.feeds[s.story_feed_id] ? res.feeds[s.story_feed_id].feed_title : null
+    }));
+}
+
+async function nbMarkStatus(account, entryIds, status, rawFeedId){
+    if (status === "read") {
+        const data = new URLSearchParams();
+        entryIds.forEach(id => data.append("story_hash", id));
+        return nbFetch(account, "/reader/mark_story_hashes_as_read", {
+            method: "POST",
+            body: data,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+    } else {
+        const data = new URLSearchParams();
+        const [fId, sId] = entryIds[0].split(':');
+        data.append("story_id", sId || entryIds[0]);
+        data.append("feed_id", rawFeedId || fId);
+        return nbFetch(account, "/reader/mark_story_as_unread", {
+            method: "POST",
+            body: data,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+    }
+}
+
+async function nbToggleBookmark(account, entryId, rawFeedId, isStarred){
+    const [fId, sId] = entryId.split(':');
+    const data = new URLSearchParams();
+    data.append("story_id", sId || entryId);
+    data.append("feed_id", rawFeedId || fId);
+    const endpoint = isStarred ? "/reader/mark_story_as_starred" : "/reader/mark_story_as_unstarred";
+    return nbFetch(account, endpoint, {
+        method: "POST",
+        body: data,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
 }
 
 /* ============================= WALLABAG API ============================= */
@@ -798,16 +1077,11 @@ function wbBase(){ return (CFG.wallabagUrl||"").replace(/\/+$/,""); }
 async function wbEnsureToken(){
   if(CFG.wallabagAccessToken && Date.now() < CFG.wallabagTokenExpiry - 30000) return CFG.wallabagAccessToken;
   const body = new URLSearchParams({
-    grant_type:"password",
-    client_id:CFG.wallabagClientId,
-    client_secret:CFG.wallabagClientSecret,
-    username:CFG.wallabagUsername,
-    password:CFG.wallabagPassword
+    grant_type:"password", client_id:CFG.wallabagClientId, client_secret:CFG.wallabagClientSecret,
+    username:CFG.wallabagUsername, password:CFG.wallabagPassword
   });
   const resp = await fetch(wbBase()+"/oauth/v2/token", {
-    method:"POST",
-    headers:{"Content-Type":"application/x-www-form-urlencoded"},
-    body
+    method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body
   });
   if(!resp.ok) throw new Error("Wallabag auth failed "+resp.status);
   const data = await resp.json();
@@ -820,8 +1094,7 @@ async function wbEnsureToken(){
 async function wbSaveEntry(title, content, url){
   const token = await wbEnsureToken();
   const resp = await fetch(wbBase()+"/api/entries", {
-    method:"POST",
-    headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token},
+    method:"POST", headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token},
     body:JSON.stringify({url, title, content})
   });
   if(!resp.ok) throw new Error("Wallabag save failed "+resp.status);
@@ -832,10 +1105,7 @@ async function wbSaveEntry(title, content, url){
 function sanitizeHtml(html){
   const doc = new DOMParser().parseFromString(html||"", "text/html");
   doc.querySelectorAll("script,style,iframe,object,embed,form").forEach(n=>n.remove());
-
-  ["colgroup","col"].forEach(tag=>{
-    doc.querySelectorAll(tag).forEach(el=>el.remove());
-  });
+  ["colgroup","col"].forEach(tag=>{ doc.querySelectorAll(tag).forEach(el=>el.remove()); });
   ["table","thead","tbody","tfoot","tr","td","th"].forEach(tag=>{
     doc.querySelectorAll(tag).forEach(el=>{
       const parent = el.parentNode;
@@ -844,7 +1114,6 @@ function sanitizeHtml(html){
       parent.removeChild(el);
     });
   });
-
   doc.querySelectorAll("a").forEach(a=>{
     const isImageOnly = a.children.length===1 && a.firstElementChild.tagName==="IMG" && a.textContent.trim()==="";
     if(isImageOnly){
@@ -854,7 +1123,6 @@ function sanitizeHtml(html){
       parent.removeChild(a);
     }
   });
-
   doc.querySelectorAll("*").forEach(el=>{
     [...el.attributes].forEach(attr=>{
       const name = attr.name.toLowerCase();
@@ -863,18 +1131,14 @@ function sanitizeHtml(html){
       if(name==="style" || name==="align" || name==="valign") el.removeAttribute(attr.name);
     });
   });
-  doc.querySelectorAll("img").forEach(img=>{
-    img.removeAttribute("width");
-    img.removeAttribute("height");
-  });
+  doc.querySelectorAll("img").forEach(img=>{ img.removeAttribute("width"); img.removeAttribute("height"); });
   return doc.body.innerHTML;
 }
 
 /* ============================= UI PLUMBING ============================= */
 const $ = sel => document.querySelector(sel);
 const screens = ["screen-config","screen-feeds","screen-articles","screen-article"];
-let navStack = [];
-let currentScreen = null;
+let navStack = []; let currentScreen = null;
 
 function showScreen(id, opts){
   opts = opts || {};
@@ -887,8 +1151,7 @@ function showScreen(id, opts){
 }
 function navigate(id, opts){
   if(currentScreen) navStack.push({id:currentScreen, opts:lastOpts});
-  lastOpts = opts;
-  showScreen(id, opts);
+  lastOpts = opts; showScreen(id, opts);
 }
 let lastOpts = {};
 $("#btn-back").addEventListener("click", ()=>{
@@ -902,17 +1165,15 @@ $("#btn-config").addEventListener("click", ()=>{
 let toastTimer = null;
 function toast(msg){
   const el = $("#toast");
-  el.textContent = msg;
-  el.classList.add("show");
+  el.textContent = msg; el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>el.classList.remove("show"), 2600);
 }
 
 /* ============================= CONFIG SCREEN LOGIC ============================= */
 function populateConfigForm(){
-  $("#cfg-mf-url").value = CFG.minifluxUrl;
-  $("#cfg-mf-token").value = CFG.minifluxToken;
-  $("#cfg-mf-max").value = CFG.minifluxMaxItems;
+  renderAccountsList();
+  
   $("#cfg-wb-url").value = CFG.wallabagUrl;
   $("#cfg-wb-client-id").value = CFG.wallabagClientId;
   $("#cfg-wb-client-secret").value = CFG.wallabagClientSecret;
@@ -922,10 +1183,8 @@ function populateConfigForm(){
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
   
   $("#cfg-theme-mode").value = CFG.themeMode;
-  $("#cfg-light-bg").value = CFG.lightBg;
-  $("#cfg-light-fg").value = CFG.lightFg;
-  $("#cfg-dark-bg").value = CFG.darkBg;
-  $("#cfg-dark-fg").value = CFG.darkFg;
+  $("#cfg-light-bg").value = CFG.lightBg; $("#cfg-light-fg").value = CFG.lightFg;
+  $("#cfg-dark-bg").value = CFG.darkBg; $("#cfg-dark-fg").value = CFG.darkFg;
   
   $("#cfg-font-size").value = CFG.fontSize;
   $("#font-size-label").textContent = CFG.fontSize + "px";
@@ -942,6 +1201,104 @@ function populateConfigForm(){
   refreshStartupOptions();
   updateCacheUsageDisplay();
 }
+
+/* Accounts Management UI */
+function renderAccountsList() {
+  const list = $("#cfg-accounts-list");
+  list.innerHTML = "";
+  if(!CFG.accounts || CFG.accounts.length === 0) {
+    list.innerHTML = `<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">No accounts</div></div>`;
+    return;
+  }
+  CFG.accounts.forEach(acc => {
+    const row = document.createElement("div");
+    row.className = "account-item";
+    row.innerHTML = `
+      <div class="info">
+        <strong>${escapeHtml(acc.name)}</strong>
+        <span>${escapeHtml(acc.type)} &middot; ${escapeHtml(acc.url)}</span>
+      </div>
+      <div>
+        <button class="icon" title="Edit" onclick="editAccount('${acc.id}')">&#9998;</button>
+        <button class="icon danger" title="Remove" onclick="deleteAccount('${acc.id}')">&#128465;</button>
+      </div>
+    `;
+    list.appendChild(row);
+  });
+}
+
+$("#btn-add-account").addEventListener("click", () => {
+  $("#acc-form-id").value = "";
+  $("#acc-type").value = "miniflux";
+  $("#acc-name").value = "";
+  $("#acc-url").value = "";
+  $("#acc-token").value = "";
+  $("#acc-user").value = "";
+  $("#acc-pass").value = "";
+  $("#acc-max").value = "50";
+  $("#acc-type").dispatchEvent(new Event("change"));
+  $("#account-form").classList.remove("hidden");
+  $("#btn-add-account").classList.add("hidden");
+});
+
+$("#btn-cancel-account").addEventListener("click", () => {
+  $("#account-form").classList.add("hidden");
+  $("#btn-add-account").classList.remove("hidden");
+});
+
+$("#acc-type").addEventListener("change", (e) => {
+  const t = e.target.value;
+  $("#acc-mf-fields").classList.toggle("hidden", t !== "miniflux");
+  $("#acc-nb-fields").classList.toggle("hidden", t !== "newsblur");
+});
+
+$("#btn-save-account").addEventListener("click", () => {
+  const id = $("#acc-form-id").value || ("acc_" + Date.now());
+  const acc = {
+    id: id,
+    type: $("#acc-type").value,
+    name: $("#acc-name").value.trim() || $("#acc-type").value,
+    url: $("#acc-url").value.trim(),
+    maxItems: parseInt($("#acc-max").value, 10) || 50
+  };
+  if(acc.type === "miniflux") { acc.token = $("#acc-token").value.trim(); }
+  if(acc.type === "newsblur") { acc.username = $("#acc-user").value.trim(); acc.password = $("#acc-pass").value; }
+
+  const existingIdx = CFG.accounts.findIndex(a => a.id === id);
+  if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
+  else CFG.accounts.push(acc);
+  
+  saveConfig(CFG);
+  renderAccountsList();
+  $("#btn-cancel-account").click();
+});
+
+window.editAccount = (id) => {
+  const acc = CFG.accounts.find(a => a.id === id);
+  if(!acc) return;
+  $("#acc-form-id").value = acc.id;
+  $("#acc-type").value = acc.type;
+  $("#acc-name").value = acc.name;
+  $("#acc-url").value = acc.url;
+  $("#acc-max").value = acc.maxItems;
+  $("#acc-token").value = acc.token || "";
+  $("#acc-user").value = acc.username || "";
+  $("#acc-pass").value = acc.password || "";
+  $("#acc-type").dispatchEvent(new Event("change"));
+  $("#account-form").classList.remove("hidden");
+  $("#btn-add-account").classList.add("hidden");
+};
+
+window.deleteAccount = async (id) => {
+  if(!confirm("Remove this account and clear all its cached data?")) return;
+  CFG.accounts = CFG.accounts.filter(a => a.id !== id);
+  const toRemove = CFG.selectedFeeds.filter(f => f.accountId === id);
+  CFG.selectedFeeds = CFG.selectedFeeds.filter(f => f.accountId !== id);
+  saveConfig(CFG);
+  renderAccountsList();
+  for(const f of toRemove) await removeFeed(f.id);
+  toast("Account removed");
+};
 
 function refreshStartupOptions(){
   const source = feedPickerChoices
@@ -992,16 +1349,12 @@ function renderFolderChips(){
   (CFG.folders||[]).forEach(name=>{
     const chip = document.createElement("button");
     chip.type = "button"; chip.className = "chip";
-    chip.textContent = name + " \u00d7";
-    chip.title = "Remove folder";
+    chip.textContent = name + " \u00d7"; chip.title = "Remove folder";
     chip.addEventListener("click", ()=>{
       CFG.folders = CFG.folders.filter(n=>n!==name);
       CFG.selectedFeeds.forEach(f=>{ if(f.folderName===name) f.folderName=null; });
-      if(feedPickerChoices){
-        feedPickerChoices.forEach(f=>{ if(f.folderName===name) f.folderName=null; });
-      }
-      saveConfig(CFG);
-      renderFolderChips();
+      if(feedPickerChoices) feedPickerChoices.forEach(f=>{ if(f.folderName===name) f.folderName=null; });
+      saveConfig(CFG); renderFolderChips();
       if(feedPickerChoices) renderFeedPicker();
       renderFeedList();
     });
@@ -1011,29 +1364,33 @@ function renderFolderChips(){
 
 let feedPickerChoices = null; 
 $("#btn-manage-feeds").addEventListener("click", async ()=>{
-  const tmpCfg = {minifluxUrl:$("#cfg-mf-url").value, minifluxToken:$("#cfg-mf-token").value};
-  const savedCfg = CFG; CFG = Object.assign({}, CFG, tmpCfg);
-  try{
-    const feeds = await mfGetFeeds();
+  if(CFG.accounts.length === 0){ toast("Please add an account first."); return; }
+  toast("Loading feeds...");
+  try {
     feedPickerChoices = new Map();
     const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
-    feeds.forEach(f=>{
-      const prior = selectedById.get(f.id);
-      feedPickerChoices.set(f.id, {
-        id:f.id, title:f.title,
-        checked: selectedById.has(f.id),
-        categoryTitle: (f.category && f.category.title) || "Uncategorized",
-        folderName: prior ? (prior.folderName || null) : null
+    
+    for (const acc of CFG.accounts) {
+      const feeds = await apiGetFeeds(acc);
+      feeds.forEach(f => {
+        const uid = acc.id + "___" + f.id;
+        const prior = selectedById.get(uid);
+        feedPickerChoices.set(uid, {
+          uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, title: f.title,
+          checked: !!prior,
+          categoryTitle: f.categoryTitle || "Uncategorized",
+          folderName: prior ? (prior.folderName || null) : null
+        });
       });
-    });
+    }
     renderFeedPicker();
     $("#feed-picker").classList.remove("hidden");
-  }catch(e){
+    toast("Feeds loaded");
+  } catch(e) {
     toast("Could not load feeds: "+e.message);
-  }finally{
-    CFG = savedCfg;
   }
 });
+
 function renderFeedPicker(){
   const list = $("#feed-picker-list");
   list.innerHTML = "";
@@ -1043,7 +1400,8 @@ function renderFeedPicker(){
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = f.checked;
     cb.addEventListener("change", ()=>{ f.checked = cb.checked; refreshStartupOptions(); });
-    const lab = document.createElement("span"); lab.className = "grow"; lab.textContent = f.title;
+    const lab = document.createElement("div"); lab.className = "grow"; 
+    lab.innerHTML = `<div>${escapeHtml(f.title)}</div><div style="font-size:10px; color:var(--muted);">${escapeHtml(f.accountName)}</div>`;
     row.appendChild(cb); row.appendChild(lab);
 
     if(CFG.folderMode === "manual"){
@@ -1078,12 +1436,13 @@ $("#btn-clear-cache").addEventListener("click", async ()=>{
 
 /* Import / Export Options */
 $("#btn-export-cfg").addEventListener("click", ()=>{
-  const data = JSON.stringify(CFG, null, 2);
+  const exportCfg = Object.assign({}, CFG);
+  delete exportCfg.selectedFeeds; 
+  const data = JSON.stringify(exportCfg, null, 2);
   const blob = new Blob([data], {type:"application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = "nrp-config.json";
-  a.click();
+  a.href = url; a.download = "nrp-config.json"; a.click();
   URL.revokeObjectURL(url);
 });
 $("#btn-import-cfg").addEventListener("click", ()=> $("#file-import-cfg").click());
@@ -1094,6 +1453,7 @@ $("#file-import-cfg").addEventListener("change", e=>{
   reader.onload = e => {
     try{
       const parsed = JSON.parse(e.target.result);
+      delete parsed.selectedFeeds; 
       Object.assign(CFG, parsed);
       saveConfig(CFG);
       toast("Config imported. Reloading...");
@@ -1104,9 +1464,6 @@ $("#file-import-cfg").addEventListener("change", e=>{
 });
 
 $("#btn-save-config").addEventListener("click", async ()=>{
-  CFG.minifluxUrl = $("#cfg-mf-url").value.trim();
-  CFG.minifluxToken = $("#cfg-mf-token").value.trim();
-  CFG.minifluxMaxItems = parseInt($("#cfg-mf-max").value, 10) || 50;
   CFG.wallabagUrl = $("#cfg-wb-url").value.trim();
   CFG.wallabagClientId = $("#cfg-wb-client-id").value.trim();
   CFG.wallabagClientSecret = $("#cfg-wb-client-secret").value.trim();
@@ -1116,10 +1473,8 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
   
   CFG.themeMode = $("#cfg-theme-mode").value;
-  CFG.lightBg = $("#cfg-light-bg").value;
-  CFG.lightFg = $("#cfg-light-fg").value;
-  CFG.darkBg = $("#cfg-dark-bg").value;
-  CFG.darkFg = $("#cfg-dark-fg").value;
+  CFG.lightBg = $("#cfg-light-bg").value; CFG.lightFg = $("#cfg-light-fg").value;
+  CFG.darkBg = $("#cfg-dark-bg").value; CFG.darkFg = $("#cfg-dark-fg").value;
   
   CFG.fontSize = parseInt($("#cfg-font-size").value, 10) || 16;
   CFG.density = $("#cfg-density").value;
@@ -1128,16 +1483,14 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
-
   CFG.toolbarPlacement = $("#cfg-toolbar-placement").value;
 
   const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
   if(feedPickerChoices){
     const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({
-      id:f.id, title:f.title,
+      id: f.uid, rawId: f.rawId, accountId: f.accountId, title: f.title,
       folderName: CFG.folderMode==="miniflux" ? (f.categoryTitle||null)
-                : CFG.folderMode==="manual" ? (f.folderName||null)
-                : null
+                : CFG.folderMode==="manual" ? (f.folderName||null) : null
     }));
     const nowIds = new Set(nowSelected.map(f=>f.id));
     const removedIds = [...previouslySelected].filter(id=>!nowIds.has(id));
@@ -1146,7 +1499,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
     applyTheme(); setupManifest();
     for(const id of removedIds){ await removeFeed(id); }
     const addedFeeds = nowSelected.filter(f=>!previouslySelected.has(f.id));
-    for(const f of addedFeeds){ await syncFeed(f.id).catch(()=>{}); }
+    for(const f of addedFeeds){ await syncFeed(f).catch(()=>{}); }
   }else{
     saveConfig(CFG);
     applyTheme(); setupManifest();
@@ -1155,34 +1508,23 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   goToFeedList();
 });
 
-async function removeFeed(feedId){
-  const entries = await getEntriesByFeed(feedId);
+async function removeFeed(feedUid){
+  const entries = await getEntriesByFeed(feedUid);
   const toDelete = entries.filter(e=>!e.starred).map(e=>e.id);
   await deleteEntries(toDelete);
-  await tx("feedsCache","readwrite", store=>store.delete(feedId));
+  await tx("feedsCache","readwrite", store=>store.delete(feedUid));
   await gcOrphanImages();
 }
 
 /* ============================= SYNC ============================= */
-async function syncFeed(feedId){
-  const limit = CFG.minifluxMaxItems;
-  const raw = await mfGetUnreadEntries(feedId, limit);
-  const entries = (raw.entries||[]).map(e=>({
-    id:e.id, feedId:e.feed_id, title:e.title, url:e.url,
-    content: e.content, 
-    contentSize: (e.content||"").length,
-    publishedAt: e.published_at,
-    status: e.status,
-    starred: !!e.starred,
-    enclosureUrl: (e.enclosures && e.enclosures[0]) ? e.enclosures[0].url : null,
-    feedTitle: (e.feed && e.feed.title) || null
-  }));
+async function syncFeed(feedObj){
+  const account = CFG.accounts.find(a => a.id === feedObj.accountId);
+  if(!account) return;
+  const entries = await apiGetUnreadEntries(account, feedObj.rawId);
+
   for(const e of entries){
     const existing = await getEntry(e.id);
-    if(existing){
-      e.status = existing.status;
-      e.starred = existing.starred;
-    }
+    if(existing){ e.status = existing.status; e.starred = existing.starred; }
   }
   await putEntries(entries);
   if(CFG.imageCacheMode === "all"){
@@ -1191,17 +1533,19 @@ async function syncFeed(feedId){
 }
 async function syncAllFeeds(){
   await processOutbox();
-  for(const f of CFG.selectedFeeds){ await syncFeed(f.id).catch(()=>{}); }
+  for(const f of CFG.selectedFeeds){ await syncFeed(f).catch(()=>{}); }
   await refreshCounters();
 }
 async function refreshCounters(){
-  try{
-    const counters = await mfGetCounters();
-    for(const f of CFG.selectedFeeds){
-      const rec = {id:f.id, title:f.title, unreadCount:(counters.unreads && counters.unreads[f.id]) || 0};
-      await tx("feedsCache","readwrite", store=>store.put(rec));
-    }
-  }catch(e){ }
+  const countersByAcc = {};
+  for (const acc of CFG.accounts) {
+    try { countersByAcc[acc.id] = await apiGetCounters(acc); } catch(e) { }
+  }
+  for(const f of CFG.selectedFeeds){
+    const counts = countersByAcc[f.accountId];
+    const rec = { id: f.id, title: f.title, unreadCount: (counts && counts[f.rawId]) || 0 };
+    await tx("feedsCache","readwrite", store=>store.put(rec));
+  }
 }
 
 /* ============================= FEED LIST SCREEN ============================= */
@@ -1209,12 +1553,10 @@ let feedSort = {field:"name", dir:"asc"};
 const COLLAPSED_KEY = "nrp_collapsed_folders";
 let collapsedFolders = loadCollapsedFolders();
 function loadCollapsedFolders(){
-  try{ return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY)||"[]")); }
-  catch(e){ return new Set(); }
+  try{ return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY)||"[]")); } catch(e){ return new Set(); }
 }
-function saveCollapsedFolders(){
-  localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedFolders]));
-}
+function saveCollapsedFolders(){ localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedFolders])); }
+
 async function goToFeedList(){
   navStack = []; lastOpts = {title:"Feeds"};
   showScreen("screen-feeds", {title:"Feeds"});
@@ -1230,7 +1572,7 @@ async function renderFeedList(){
   const container = $("#feed-list");
   container.innerHTML = "";
   if(rows.length===0){
-    container.innerHTML = '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds from your Miniflux instance.</div>';
+    container.innerHTML = '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds.</div>';
     return;
   }
   const sortRows = arr => arr.sort((a,b)=>{
@@ -1238,8 +1580,7 @@ async function renderFeedList(){
     return feedSort.dir==="asc" ? cmp : -cmp;
   });
   const renderRow = (r, target)=>{
-    const div = document.createElement("div");
-    div.className = "feed-row";
+    const div = document.createElement("div"); div.className = "feed-row";
     div.innerHTML = `<span class="name">${escapeHtml(r.title)}</span><span class="badge mono-num">${r.unread}</span>`;
     div.addEventListener("click", ()=>openArticleList(r.id, r.title));
     (target||container).appendChild(div);
@@ -1254,17 +1595,14 @@ async function renderFeedList(){
       groups.get(key).push(r);
     });
     const groupNames = [...groups.keys()].sort((a,b)=>{
-      if(a==="Unfiled") return 1;
-      if(b==="Unfiled") return -1;
-      return a.localeCompare(b);
+      if(a==="Unfiled") return 1; if(b==="Unfiled") return -1; return a.localeCompare(b);
     });
     groupNames.forEach(name=>{
       const group = groups.get(name);
       const folderUnread = group.reduce((s,r)=>s+r.unread, 0);
       const isCollapsed = collapsedFolders.has(name);
 
-      const header = document.createElement("div");
-      header.className = "feed-folder-header";
+      const header = document.createElement("div"); header.className = "feed-folder-header";
       header.innerHTML = `
         <span class="chevron">${isCollapsed ? "\u25B8" : "\u25BE"}</span>
         <span class="folder-name">${escapeHtml(name)}</span>
@@ -1283,8 +1621,7 @@ async function renderFeedList(){
         saveCollapsedFolders();
       });
 
-      container.appendChild(header);
-      container.appendChild(body);
+      container.appendChild(header); container.appendChild(body);
     });
   }
 }
@@ -1322,13 +1659,13 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
 })();
 
 /* ============================= ARTICLE LIST SCREEN ============================= */
-let currentFeed = null;
+let currentFeedUid = null;
 let articleFilter = "unread";
 let artSort = {field:"date", dir:"desc"};
 let lastArticleOrder = [];
 
-function openArticleList(feedId, feedTitle){
-  currentFeed = {id:feedId, title:feedTitle};
+function openArticleList(feedUid, feedTitle){
+  currentFeedUid = feedUid;
   navigate("screen-articles", {title:feedTitle});
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
   renderArticleList();
@@ -1348,7 +1685,7 @@ $("#art-sort-dir").addEventListener("click", ()=>{
 });
 
 async function renderArticleList(){
-  let entries = await getEntriesByFeed(currentFeed.id);
+  let entries = await getEntriesByFeed(currentFeedUid);
   if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
   else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
   entries.sort((a,b)=>{
@@ -1358,8 +1695,7 @@ async function renderArticleList(){
     return artSort.dir==="asc" ? cmp : -cmp;
   });
   lastArticleOrder = entries.map(e=>e.id);
-  const container = $("#article-list");
-  container.innerHTML = "";
+  const container = $("#article-list"); container.innerHTML = "";
   if(entries.length===0){
     container.innerHTML = '<div class="empty"><div class="big">Nothing here</div>Pull to refresh on the feed list to fetch new items.</div>';
     return;
@@ -1384,19 +1720,12 @@ async function renderArticleList(){
     row.addEventListener("click", ()=>openArticle(e.id));
     container.appendChild(row);
     const img = row.querySelector("img.thumb");
-    if(img){
-      resolveThumbnailSrc(img.dataset.src).then(src=>{ img.src = src; });
-    }
+    if(img){ resolveThumbnailSrc(img.dataset.src).then(src=>{ img.src = src; }); }
   }
 }
 function firstImageUrl(html){ const u = extractImageUrls(html); return u[0]||null; }
-function stripTags(html){
-  const d = document.createElement("div"); d.innerHTML = html||""; return d.textContent||"";
-}
-function formatDate(iso){
-  try{ return new Date(iso).toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
-  catch(e){ return ""; }
-}
+function stripTags(html){ const d = document.createElement("div"); d.innerHTML = html||""; return d.textContent||""; }
+function formatDate(iso){ try{ return new Date(iso).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch(e){ return ""; } }
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 
@@ -1405,9 +1734,7 @@ let currentEntry = null;
 
 function findLinkTarget(contentDiv, entry){
   const anchors = contentDiv.querySelectorAll("a");
-  for(const a of anchors){
-    if(a.textContent.trim().toLowerCase() === "[link]") return a.getAttribute("href");
-  }
+  for(const a of anchors){ if(a.textContent.trim().toLowerCase() === "[link]") return a.getAttribute("href"); }
   return entry.enclosureUrl || null;
 }
 
@@ -1422,23 +1749,18 @@ async function openArticle(entryId){
   starBtn.addEventListener("click", ()=>toggleStar());
 
   const unreadBtn = document.createElement("button");
-  unreadBtn.className = "icon"; unreadBtn.title = "Mark unread";
-  unreadBtn.textContent = "\u{1F648}";
+  unreadBtn.className = "icon"; unreadBtn.title = "Mark unread"; unreadBtn.textContent = "\u{1F648}";
   unreadBtn.addEventListener("click", ()=>markUnread());
 
   const wbBtn = document.createElement("button");
-  wbBtn.className = "icon"; wbBtn.title = "Send to Wallabag";
-  wbBtn.textContent = "\u{1F4E4}";
+  wbBtn.className = "icon"; wbBtn.title = "Send to Wallabag"; wbBtn.textContent = "\u{1F4E4}";
   wbBtn.addEventListener("click", ()=>sendToWallabag());
 
   const nextBtn = document.createElement("button");
-  nextBtn.className = "icon"; nextBtn.title = "Next article";
-  nextBtn.textContent = "\u{1F449}"; 
+  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}"; 
   nextBtn.addEventListener("click", ()=>nextArticle());
 
   navigate("screen-article", {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]});
-  
-  // FIX BUG: Ensure the article scroll view begins from the very top when it opens
   $("#screen-article").scrollTop = 0; 
 
   $("#art-title").textContent = entry.title;
@@ -1456,46 +1778,42 @@ async function openArticle(entryId){
     enc.classList.add("hidden");
     for(const img of inlineImgs){
       const orig = img.getAttribute("src");
-      img.addEventListener("click", ()=>{
-        window.open(linkTarget || orig, "_blank", "noopener");
-      });
+      img.addEventListener("click", ()=>window.open(linkTarget || orig, "_blank", "noopener"));
       if(orig) resolveImageSrc(orig).then(src=>{ img.src = src; });
     }
   }else if(entry.enclosureUrl){
     enc.classList.remove("hidden");
     enc.onclick = ()=>window.open(linkTarget || entry.enclosureUrl, "_blank", "noopener");
     resolveImageSrc(entry.enclosureUrl).then(src=>{ enc.src = src; });
-  }else{
-    enc.classList.add("hidden");
-  }
+  }else{ enc.classList.add("hidden"); }
 
   if(CFG.imageCacheMode === "on-read"){ prefetchImagesForEntry(entry); }
-
   if(entry.status !== "read"){ await markRead(entry); }
 }
 
 function nextArticle(){
   if(!currentEntry || lastArticleOrder.length===0) return;
   const idx = lastArticleOrder.indexOf(currentEntry.id);
-  if(idx === -1 || idx === lastArticleOrder.length-1){
-    toast("No more articles in this list");
-    return;
-  }
+  if(idx === -1 || idx === lastArticleOrder.length-1){ toast("No more articles in this list"); return; }
   openArticle(lastArticleOrder[idx+1]);
 }
 
 async function markRead(entry){
   entry.status = "read";
   await putEntries([entry]);
-  try{ await mfMarkStatus([entry.id], "read"); }
-  catch(e){ await enqueueOutbox({type:"mark-status", entryIds:[entry.id], status:"read"}); }
+  try { 
+    const acc = CFG.accounts.find(a => a.id === entry.accountId);
+    if(acc) await apiMarkStatus(acc, [entry.rawId], "read", entry.rawFeedId); 
+  } catch(e){ await enqueueOutbox({type:"mark-status", accountId: entry.accountId, rawIds:[entry.rawId], rawFeedId: entry.rawFeedId, status:"read"}); }
 }
 async function markUnread(){
   if(!currentEntry) return;
   currentEntry.status = "unread";
   await putEntries([currentEntry]);
-  try{ await mfMarkStatus([currentEntry.id], "unread"); }
-  catch(e){ await enqueueOutbox({type:"mark-status", entryIds:[currentEntry.id], status:"unread"}); }
+  try { 
+    const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
+    if(acc) await apiMarkStatus(acc, [currentEntry.rawId], "unread", currentEntry.rawFeedId); 
+  } catch(e){ await enqueueOutbox({type:"mark-status", accountId: currentEntry.accountId, rawIds:[currentEntry.rawId], rawFeedId: currentEntry.rawFeedId, status:"unread"}); }
   toast("Marked unread");
 }
 async function toggleStar(){
@@ -1503,8 +1821,10 @@ async function toggleStar(){
   currentEntry.starred = !currentEntry.starred;
   await putEntries([currentEntry]);
   await setProtection(currentEntry, currentEntry.starred);
-  try{ await mfToggleBookmark(currentEntry.id); }
-  catch(e){ await enqueueOutbox({type:"toggle-star", entryId:currentEntry.id}); }
+  try{ 
+    const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
+    if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred); 
+  } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred: currentEntry.starred}); }
   openArticle(currentEntry.id);
 }
 async function sendToWallabag(){
@@ -1520,17 +1840,14 @@ async function sendToWallabag(){
 }
 
 /* ============================= BOOT ============================= */
-function isConfigured(){
-  return !!(CFG.minifluxUrl && CFG.minifluxToken && CFG.selectedFeeds.length>0);
-}
+function isConfigured(){ return CFG.accounts.length > 0 && CFG.selectedFeeds.length > 0; }
+
 async function boot(){
   applyTheme();
   setupManifest();
   populateConfigForm();
 
-  if("serviceWorker" in navigator){
-    navigator.serviceWorker.register("sw.js").catch(()=>{});
-  }
+  if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 
   if(!isConfigured()){
     showScreen("screen-config", {title:"Settings"});
@@ -1546,9 +1863,7 @@ async function boot(){
       showScreen("screen-feeds", {title:"Feeds"});
       await renderFeedList();
       openArticleList(feed.id, feed.title);
-    }else{
-      await goToFeedList();
-    }
+    }else{ await goToFeedList(); }
   }
   refreshCounters();
 }
