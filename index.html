@@ -17,6 +17,24 @@
     --fs-base:16px;
     --font-ui:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
     --font-read:Georgia,'Iowan Old Style','Palatino Linotype',serif;
+
+    /* Configurable Typography Defaults */
+    --fs-feed: 14px; --fw-feed: 400;
+    --fs-art-list-title: 15px; --fw-art-list-title: 700;
+    --fs-art-list-preview: 12px; --fw-art-list-preview: 400;
+    --fs-art-title: 22px; --fw-art-title: 700;
+    --fs-art-body: 16px; --fw-art-body: 400;
+
+    --font-family-feed: Georgia, serif;
+    --font-family-list-title: Georgia, serif;
+    --font-family-list-preview: Georgia, serif;
+    --font-family-title: Georgia, serif;
+    --font-family-body: Georgia, serif;
+    .dynamic-font { font-family: var(--active-font-feed); }
+    .dynamic-font { font-family: var(--active-font-list-title); }
+    .dynamic-font { font-family: var(--active-font-list-preview); }
+    .dynamic-font { font-family: var(--active-font-title); }
+    .dynamic-font { font-family: var(--active-font-body); }
   }
   *{box-sizing:border-box;}
   html,body{height:100%;}
@@ -93,7 +111,7 @@
     cursor:pointer; min-height:44px;
   }
   .feed-row:active{ background:var(--raised); }
-  .feed-row .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .feed-row .name{ flex:1; min-width:0; font-size:var(--fs-feed); font-weight:var(--fw-feed); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .empty{ padding:2.5em 1.4em; text-align:center; color:var(--muted); }
   .empty .big{ font-size:13px; font-family:var(--font-ui); letter-spacing:.04em; margin-bottom:.5em; }
 
@@ -108,24 +126,24 @@
   .art-row .thumb{ flex:0 0 auto; width:56px; height:56px; object-fit:cover; border-radius:2px; border:1px solid var(--border); background:var(--raised); }
   .art-row .thumb.large{ width:96px; height:96px; }
   .art-row .body{ flex:1; min-width:0; }
-  .art-row .title{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 0.94); font-weight:700; margin:0 0 .2em; }
-  .art-row .preview{ font-size:calc(var(--fs-base) * 0.78); color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
+  .art-row .title{ font-family:var(--font-read); font-size:var(--fs-art-list-title); font-weight:var(--fw-art-list-title); margin:0 0 .2em; }
+  .art-row .preview{ font-size:var(--fs-art-list-preview); font-weight:var(--fw-art-list-preview); color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
   .art-row .meta{ font-size:calc(var(--fs-base) * 0.69); color:var(--muted); margin-top:.3em; }
   .art-row .star-dot{ color:var(--accent); margin-right:.3em; }
 
   /* article view */
   .art-head{ padding:1em 1.1em .6em; border-bottom:1px solid var(--border); }
-  .art-head h2{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 1.375); line-height:1.25; margin:0 0 .3em; cursor:pointer; }
+  .art-head h2{ font-family:var(--font-read); font-size:var(--fs-art-title); font-weight:var(--fw-art-title); line-height:1.25; margin:0 0 .3em; cursor:pointer; }
   .art-head .meta{ font-size:calc(var(--fs-base) * 0.75); color:var(--muted); }
   .art-enclosure{ max-width:100%; width:auto; height:auto; max-height:60vh; object-fit:contain; display:block; margin:0 auto; cursor:pointer; }
-  .art-content{ font-family:var(--font-read); font-size:calc(var(--fs-base) * 1.03); line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
+  .art-content{ font-family:var(--font-read); font-size:var(--fs-art-body); font-weight:var(--fw-art-body); line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
   .art-content *{ float:none !important; }
   .art-content img{ display:block !important; float:none !important; max-width:100% !important; width:auto !important; height:auto !important; margin:0 0 .8em; cursor:pointer; border-radius:2px; }
   .art-content a{ color:var(--accent); }
   .art-content pre{ overflow-x:auto; background:var(--raised); padding:.7em; border-radius:2px; }
 
   /* config */
-  .chk-list{ max-height:260px; overflow-y:auto; overflow-x:hidden; border:1px solid var(--border); border-radius:2px; width:100%; box-sizing:border-box; }
+  .chk-list{ max-height:260px; overflow-y:auto; overflow-x:hidden; border:1px solid var(--border); border-radius:2px; width:100%; max-width:100%; box-sizing:border-box; }
   .chk-row{ display:flex; align-items:center; gap:.6em; padding:.5em .7em; border-bottom:1px solid var(--border); }
   .chk-row:last-child{ border-bottom:none; }
   .chk-row input{ width:auto; }
@@ -173,6 +191,7 @@
     <button id="btn-back" class="icon hidden" aria-label="Back">&#128072;</button>
     <h1 id="top-title">NRP</h1>
     <span id="top-actions" class="row" style="gap:.4em;"></span>
+    <button id="btn-top-save" class="icon" aria-label="Save Config">&#128190;</button>
     <button id="btn-config" class="icon" aria-label="Settings">&#128736;</button>
   </div>
 
@@ -327,6 +346,64 @@
       </fieldset>
 
       <fieldset>
+        <legend>Typography</legend>
+        <label>Feed List</label>
+        <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
+          <select id="cfg-ff-feed" class="grow" style="flex: 1;">
+             <option value="serif">Serif</option>
+             <option value="sans-serif">Sans</option>
+             <option value="monospace">Mono</option>
+          </select>
+          <input id="cfg-fs-feed" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <label style="margin:0"><input id="cfg-fw-feed" type="checkbox"> Bold</label>
+        </div>
+
+        <label>Article List Preview Header</label>
+        <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
+          <select id="cfg-ff-art-list-title" class="grow" style="flex: 1;">
+             <option value="serif">Serif</option>
+             <option value="sans-serif">Sans</option>
+             <option value="monospace">Mono</option>
+          </select>
+          <input id="cfg-fs-art-list-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
+        </div>
+
+        <label>Article List Preview Text</label>
+        <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
+          <select id="cfg-ff-art-list-preview" class="grow" style="flex: 1;">
+             <option value="serif">Serif</option>
+             <option value="sans-serif">Sans</option>
+             <option value="monospace">Mono</option>
+          </select>
+          <input id="cfg-fs-art-list-preview" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <label style="margin:0"><input id="cfg-fw-art-list-preview" type="checkbox"> Bold</label>
+        </div>
+
+        <label>Article Header</label>
+        <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
+          <select id="cfg-ff-art-title" class="grow" style="flex: 1;">
+             <option value="serif">Serif</option>
+             <option value="sans-serif">Sans</option>
+             <option value="monospace">Mono</option>
+          </select>
+          <input id="cfg-fs-art-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <label style="margin:0"><input id="cfg-fw-art-title" type="checkbox"> Bold</label>
+        </div>
+
+        <label>Article Body</label>
+        <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
+          <select id="cfg-ff-art-body" class="grow" style="flex: 1;">
+             <option value="serif">Serif</option>
+             <option value="sans-serif">Sans</option>
+             <option value="monospace">Mono</option>
+          </select>
+          <input id="cfg-fs-art-body" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <label style="margin:0"><input id="cfg-fw-art-body" type="checkbox"> Bold</label>
+        </div>  
+      </fieldset>
+
+      <fieldset>
         <legend>Cache</legend>
         <label for="cfg-cache-size">Max image cache size</label>
         <select id="cfg-cache-size">
@@ -445,7 +522,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.6"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.8"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -459,9 +536,19 @@ const DEFAULT_CFG = {
   accentColor:"#B8752E",
   startupMode:"feedlist",
   density:"small", previewLines:3, fontSize:16,
+  fsFeed: 14, fwFeed: false,
+  fsArtListTitle: 15, fwArtListTitle: true,
+  fsArtListPreview: 12, fwArtListPreview: false,
+  fsArtTitle: 22, fwArtTitle: true,
+  fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   folderMode:"none", folders:[], hideEmptyFeeds:false,
   toolbarPlacement: "top",
+    ffFeed: "Georgia, serif",
+    ffArtListTitle: "Georgia, serif",
+    ffArtListPreview: "Georgia, serif",
+    ffArtTitle: "Georgia, serif",
+    ffArtBody: "Georgia, serif",
   selectedFeeds:[] // [{id: accountId___feedId, accountId, title, folderName}]
 };
 
@@ -515,12 +602,38 @@ function getActiveColors() {
   };
 }
 
+  const FONT_MAP = {
+  "serif": "Georgia, serif",
+  "sans-serif": "system-ui, -apple-system, sans-serif",
+  "monospace": "ui-monospace, monospace"
+};
+  
 function applyTheme(){
   const colors = getActiveColors();
   document.documentElement.style.setProperty("--bg", colors.bg);
   document.documentElement.style.setProperty("--fg", colors.fg);
   document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
   document.documentElement.style.setProperty("--fs-base", (CFG.fontSize||16)+"px");
+  
+  // Custom Typography overrides
+  document.documentElement.style.setProperty("--fs-feed", (CFG.fsFeed || 14) + "px");
+  document.documentElement.style.setProperty("--fw-feed", CFG.fwFeed ? "700" : "400");
+  document.documentElement.style.setProperty("--fs-art-list-title", (CFG.fsArtListTitle || 15) + "px");
+  document.documentElement.style.setProperty("--fw-art-list-title", CFG.fwArtListTitle ? "700" : "400");
+  document.documentElement.style.setProperty("--fs-art-list-preview", (CFG.fsArtListPreview || 12) + "px");
+  document.documentElement.style.setProperty("--fw-art-list-preview", CFG.fwArtListPreview ? "700" : "400");
+  document.documentElement.style.setProperty("--fs-art-title", (CFG.fsArtTitle || 22) + "px");
+  document.documentElement.style.setProperty("--fw-art-title", CFG.fwArtTitle ? "700" : "400");
+  document.documentElement.style.setProperty("--fs-art-body", (CFG.fsArtBody || 16) + "px");
+  document.documentElement.style.setProperty("--fw-art-body", CFG.fwArtBody ? "700" : "400");
+
+  // Apply Font Families
+  document.documentElement.style.setProperty("--font-family-feed", FONT_MAP[CFG.ffFeed]);
+  document.documentElement.style.setProperty("--font-family-list-title", FONT_MAP[CFG.ffArtListTitle]);
+  document.documentElement.style.setProperty("--font-family-list-preview", FONT_MAP[CFG.ffArtListPreview]);
+  document.documentElement.style.setProperty("--font-family-title", FONT_MAP[CFG.ffArtTitle]);
+  document.documentElement.style.setProperty("--font-family-body", FONT_MAP[CFG.ffArtBody]);
+  
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute("content", colors.bg);
   document.body.classList.toggle("toolbar-bottom", CFG.toolbarPlacement === "bottom");
@@ -729,9 +842,6 @@ async function resolveThumbnailSrc(url){
     return obj;
   }
 
-  // Reuse a cached full-res blob if we have one; otherwise fetch fresh bytes just for
-  // thumbnailing. This means an oversized original that can't be cached whole can still
-  // yield a small, cacheable thumbnail - we don't require the full image to be stored first.
   let sourceBlob = null;
   const fullRec = await getCachedAsset(url);
   if(fullRec && fullRec.blob){
@@ -745,8 +855,6 @@ async function resolveThumbnailSrc(url){
   }
 
   if(!sourceBlob){
-    // Couldn't read bytes directly (e.g. CORS-opaque response) - nothing to thumbnail from
-    // locally. Let the background opaque-cache path (rate-limited) keep trying.
     cacheOpaqueInBackground(url);
     return url;
   }
@@ -754,12 +862,9 @@ async function resolveThumbnailSrc(url){
   const sourceObjUrl = URL.createObjectURL(sourceBlob);
   try{
     let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
-    if(!thumbBlob) thumbBlob = sourceBlob; // already small enough - reuse as-is, no resize needed
+    if(!thumbBlob) thumbBlob = sourceBlob; 
 
     if(!fullRec){
-      // Opportunistically persist the full-res copy too, for the enclosure/article view.
-      // If it's too big to fit under the per-item cap, log it and move on - the thumbnail
-      // below is generated independently and isn't blocked by this.
       await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
     }
 
@@ -768,8 +873,6 @@ async function resolveThumbnailSrc(url){
       await storeAsset(thumbKey, thumbBlob);
       thumbObj = URL.createObjectURL(thumbBlob);
     }catch(err){
-      // Thumbnail itself exceeded the cap (unlikely, but possible with a tiny cap) - still
-      // show it for this session, just don't persist it.
       if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size);
       thumbObj = URL.createObjectURL(thumbBlob);
     }
@@ -807,8 +910,8 @@ async function resolveImageSrc(url){
   return url;
 }
 
-const opaqueAttempted = new Map(); // url -> timestamp of last attempt
-const OPAQUE_RETRY_MS = 10 * 60 * 1000; // don't retry a known-uncacheable image for 10 minutes
+const opaqueAttempted = new Map(); 
+const OPAQUE_RETRY_MS = 10 * 60 * 1000; 
 
 function cacheOpaqueInBackground(url){
   const last = opaqueAttempted.get(url);
@@ -1005,15 +1108,13 @@ async function mfToggleBookmark(account, entryId){
 const NB_STATE = {
     isAuthenticated: false,
     isLoggingIn: null,
-    feeds: [] // Your local feed cache
+    feeds: []
 };
 
-// Simplified login workflow: credentials are now verified on-the-fly by the proxy on every fetch
 async function loginToNewsBlur(account) {
     if (NB_STATE.isLoggingIn) return NB_STATE.isLoggingIn;
     
     NB_STATE.isLoggingIn = (async () => {
-        // Validate locally that credentials exist before trying to use the proxy gateway
         if (account.username && account.password) {
             NB_STATE.isAuthenticated = true;
         } else {
@@ -1027,54 +1128,38 @@ async function loginToNewsBlur(account) {
     return NB_STATE.isLoggingIn;
 }
 
-// 1. CLEAR FEED LIST
 function clearFeeds() {
     console.log("Clearing feed cache...");
     NB_STATE.feeds = [];
-    // If you are using a UI framework, trigger your state update here
 }
 
-// 2. CORE FETCHING MECHANISM WITH PROXY ENHANCEMENT
 async function nbFetch(account, path, opts = {}) {
-    // Proactive local authentication state validation check
     if (!NB_STATE.isAuthenticated) {
         await loginToNewsBlur(account);
     }
 
-    // Set up standard headers required to securely interact with the Python CORS Proxy
     const headers = {
         'Accept': 'application/json',
         'X-NB-User': account.username,
         'X-NB-Pass': account.password
     };
 
-    // Keep existing Content-Type headers if they were set up for a POST payload body
     if (opts.headers && opts.headers['Content-Type']) {
         headers['Content-Type'] = opts.headers['Content-Type'];
     }
 
-    const fetchOptions = {
-        ...opts,
-        headers: headers
-        // NOTE: credentials: "include" is deleted because the proxy uses custom authentication headers!
-    };
+    const fetchOptions = { ...opts, headers: headers };
 
     try {
-        // account.url must point directly to your Python proxy (e.g., "http://localhost:8080")
         const res = await fetch(account.url + path, fetchOptions);
-        
-        console.debug(`[NewsBlur API via Proxy] ${path} -> Status: ${res.status}`);
-        
         if (res.status === 401 || res.status === 403) {
-            NB_STATE.isAuthenticated = false; // Reset local auth state if proxy flags credentials
+            NB_STATE.isAuthenticated = false; 
             throw new Error("Authentication failed or session expired (Unauthorized/Forbidden)");
         }
         if (!res.ok) {
             throw new Error(`HTTP Error: ${res.status} ${res.statusText}`);
         }
-        
-        const data = await res.json();
-        return data;
+        return await res.json();
     } catch (error) {
         console.error(`[NewsBlur API Error] Path: ${path}`, error);
         return { error: true, message: error.message, feeds: [] };
@@ -1247,6 +1332,9 @@ function showScreen(id, opts){
   screens.forEach(s=>$("#"+s).classList.toggle("hidden", s!==id));
   currentScreen = id;
   $("#btn-back").classList.toggle("hidden", navStack.length===0);
+  $("#btn-top-save").classList.toggle("hidden", id !== "screen-config"); // Toggle Toolbar save
+  $("#btn-config").classList.toggle("hidden", id === "screen-config");
+  
   $("#top-title").textContent = opts.title || "NRP";
   $("#top-actions").innerHTML = "";
   (opts.actions||[]).forEach(a=>$("#top-actions").appendChild(a));
@@ -1255,7 +1343,7 @@ function navigate(id, opts){
   if(currentScreen) navStack.push({id:currentScreen, opts:lastOpts});
   lastOpts = opts; showScreen(id, opts);
 }
-function updateScreen(id, opts){ // like navigate(), but doesn't touch the back-history stack
+function updateScreen(id, opts){ 
   lastOpts = opts; showScreen(id, opts);
 }
 let lastOpts = {};
@@ -1263,8 +1351,6 @@ $("#btn-back").addEventListener("click", ()=>{
   const prev = navStack.pop();
   if(!prev) return;
   lastOpts = prev.opts; showScreen(prev.id, prev.opts);
-  // Returning to a list screen should reflect anything that changed while we were away
-  // (an article just marked read, updated unread counts, etc.) rather than showing stale state.
   if(prev.id === "screen-articles"){
     renderArticleList();
   }else if(prev.id === "screen-feeds"){
@@ -1277,6 +1363,9 @@ $("#btn-config").addEventListener("click", ()=>{
     renderOversizedLog();
     updateCacheUsageDisplay();
   }
+});
+$("#btn-top-save").addEventListener("click", () => {
+    $("#btn-save-config").click();
 });
 
 let toastTimer = null;
@@ -1309,6 +1398,17 @@ function populateConfigForm(){
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
+  
+  $("#cfg-fs-feed").value = CFG.fsFeed || 14;
+  $("#cfg-fw-feed").checked = CFG.fwFeed;
+  $("#cfg-fs-art-list-title").value = CFG.fsArtListTitle || 15;
+  $("#cfg-fw-art-list-title").checked = CFG.fwArtListTitle;
+  $("#cfg-fs-art-list-preview").value = CFG.fsArtListPreview || 12;
+  $("#cfg-fw-art-list-preview").checked = CFG.fwArtListPreview;
+  $("#cfg-fs-art-title").value = CFG.fsArtTitle || 22;
+  $("#cfg-fw-art-title").checked = CFG.fwArtTitle;
+  $("#cfg-fs-art-body").value = CFG.fsArtBody || 16;
+  $("#cfg-fw-art-body").checked = CFG.fwArtBody;
 
   $("#cfg-folder-mode").value = CFG.folderMode;
   $("#cfg-toolbar-placement").value = CFG.toolbarPlacement || "top";
@@ -1603,7 +1703,12 @@ function renderOversizedLog(){
   list.slice().sort((a,b)=>b.size-a.size).forEach(item=>{
     const row = document.createElement("div");
     row.className = "chk-row";
-    row.style.display = "block"; // stack full width so the scrollable url line below has room
+    row.style.display = "block"; 
+    row.style.width = "100%";
+    row.style.minWidth = "0";
+    row.style.boxSizing = "border-box";
+    row.style.overflow = "hidden";
+    
     const sizeMb = (item.size/1048576).toFixed(2);
     const seen = new Date(item.lastSeen).toLocaleString();
     row.innerHTML = `<div style="min-width:0; max-width:100%;">
@@ -1662,6 +1767,25 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.darkBg = $("#cfg-dark-bg").value; CFG.darkFg = $("#cfg-dark-fg").value;
   
   CFG.fontSize = parseInt($("#cfg-font-size").value, 10) || 16;
+  
+  // Save Typography
+  CFG.fsFeed = parseInt($("#cfg-fs-feed").value, 10) || 14;
+  CFG.fwFeed = $("#cfg-fw-feed").checked;
+  CFG.fsArtListTitle = parseInt($("#cfg-fs-art-list-title").value, 10) || 15;
+  CFG.fwArtListTitle = $("#cfg-fw-art-list-title").checked;
+  CFG.fsArtListPreview = parseInt($("#cfg-fs-art-list-preview").value, 10) || 12;
+  CFG.fwArtListPreview = $("#cfg-fw-art-list-preview").checked;
+  CFG.fsArtTitle = parseInt($("#cfg-fs-art-title").value, 10) || 22;
+  CFG.fwArtTitle = $("#cfg-fw-art-title").checked;
+  CFG.fsArtBody = parseInt($("#cfg-fs-art-body").value, 10) || 16;
+  CFG.fwArtBody = $("#cfg-fw-art-body").checked;
+
+  CFG.ffFeed = $("#cfg-ff-feed").value;
+  CFG.ffArtListTitle = $("#cfg-ff-art-list-title").value;
+  CFG.ffArtListPreview = $("#cfg-ff-art-list-preview").value; 
+  CFG.ffArtTitle = $("#cfg-ff-art-title").value;
+  CFG.ffArtBody = $("#cfg-ff-art-body").value;
+
   CFG.density = $("#cfg-density").value;
   CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
   CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
@@ -1964,8 +2088,6 @@ async function openArticle(entryId, opts){
 
   const screenOpts = {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
   if(opts.replace){
-    // Refreshing content on the screen we're already on (star toggle, next article) - don't
-    // push a duplicate history entry, or Back ends up walking through stale article states.
     updateScreen("screen-article", screenOpts);
     if(!opts.keepScroll) $("#screen-article").scrollTop = 0;
   }else{
@@ -2005,7 +2127,7 @@ function nextArticle(){
   if(!currentEntry || lastArticleOrder.length===0) return;
   const idx = lastArticleOrder.indexOf(currentEntry.id);
   if(idx === -1 || idx === lastArticleOrder.length-1){ toast("No more articles in this list"); return; }
-  openArticle(lastArticleOrder[idx+1], {replace:true}); // new content - reset scroll to top
+  openArticle(lastArticleOrder[idx+1], {replace:true}); 
 }
 
 async function markRead(entry){
@@ -2033,51 +2155,34 @@ async function toggleStar(){
   await setProtection(currentEntry, currentEntry.starred);
   try{ 
     const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
-    if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred); 
-  } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred: currentEntry.starred}); }
-  openArticle(currentEntry.id, {replace:true, keepScroll:true}); // same article - stay where the user was reading
+    if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
+  } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred}); }
+  const starBtn = $("#top-actions button[aria-label='Star']");
+  if(starBtn) starBtn.innerHTML = currentEntry.starred ? "&#10084;" : "&#128420;";
 }
 async function sendToWallabag(){
   if(!currentEntry) return;
-  toast("Sending to Wallabag\u2026");
-  try{
-    await wbSaveEntry(currentEntry.title, currentEntry.content, currentEntry.url);
-    toast("Saved to Wallabag");
-  }catch(e){
-    await enqueueOutbox({type:"wallabag-save", title:currentEntry.title, content:currentEntry.content, url:currentEntry.url});
-    toast("Offline: queued for Wallabag");
-  }
+  if(!CFG.wallabagUrl || !CFG.wallabagUsername){ toast("Wallabag not configured"); return; }
+  toast("Sending to Wallabag...");
+  try{ await wbSaveEntry(currentEntry.title, currentEntry.content, currentEntry.url); toast("Saved to Wallabag"); }
+  catch(e){ await enqueueOutbox({type:"wallabag-save", title:currentEntry.title, content:currentEntry.content, url:currentEntry.url}); toast("Queued for Wallabag"); }
 }
 
-/* ============================= BOOT ============================= */
-function isConfigured(){ return CFG.accounts.length > 0 && CFG.selectedFeeds.length > 0; }
-
-async function boot(){
-  applyTheme();
-  setupManifest();
-  populateConfigForm();
-
-  if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
-
-  if(!isConfigured()){
-    showScreen("screen-config", {title:"Settings"});
-    return;
-  }
-  processOutbox();
-  if(CFG.startupMode === "feedlist"){
-    await goToFeedList();
+/* ============================= STARTUP ============================= */
+async function init(){
+  await openDb();
+  applyTheme(); setupManifest(); populateConfigForm();
+  
+  if(!CFG.accounts || CFG.accounts.length === 0){
+    navigate("screen-config", {title:"Settings"});
+  }else if(CFG.startupMode && CFG.startupMode !== "feedlist"){
+    const f = CFG.selectedFeeds.find(x=>x.id===CFG.startupMode);
+    if(f) openArticleList(f.id, f.title); else goToFeedList();
   }else{
-    const feed = CFG.selectedFeeds.find(f=>String(f.id)===String(CFG.startupMode));
-    if(feed){
-      navStack = []; lastOpts = {title:"Feeds"};
-      showScreen("screen-feeds", {title:"Feeds"});
-      await renderFeedList();
-      openArticleList(feed.id, feed.title);
-    }else{ await goToFeedList(); }
+    goToFeedList();
   }
-  refreshCounters();
 }
-boot();
+init();
 
 })();
 </script>
