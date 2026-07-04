@@ -157,6 +157,8 @@
 </head>
 <body>
 
+  <div id="bg-task-indicator" class="hidden" style="position:fixed; top:8px; left:50%; transform:translateX(-50%); background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px; font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;">Syncing...</div>
+
   <div class="topbar">
     <button id="btn-back" class="icon hidden" aria-label="Back">&#128072;</button>
     <h1 id="top-title">NRP</h1>
@@ -209,6 +211,11 @@
           <button id="btn-manage-feeds" class="grow">Manage feeds&hellip;</button>
         </div>
         <div id="feed-picker" class="hidden" style="margin-top:.8em;">
+          <div class="row between" style="margin-bottom:.6em;">
+            <select id="feed-picker-account" class="grow" style="margin-right:.4em;"></select>
+            <button id="btn-select-all" class="chip">All</button>
+            <button id="btn-deselect-all" class="chip">None</button>
+          </div>
           <div id="feed-picker-list" class="chk-list"></div>
         </div>
       </fieldset>
@@ -396,6 +403,17 @@
 <script>
 (function(){
 "use strict";
+
+/* ============================= BACKGROUND TASK INDICATOR ============================= */
+let bgTaskCount = 0;
+function startBgTask() {
+  bgTaskCount++;
+  $("#bg-task-indicator").classList.remove("hidden");
+}
+function endBgTask() {
+  bgTaskCount = Math.max(0, bgTaskCount - 1);
+  if (bgTaskCount === 0) $("#bg-task-indicator").classList.add("hidden");
+}
 
 /* ============================= CONFIG ============================= */
 const CFG_KEY = "nrp_config";
@@ -695,10 +713,12 @@ async function resolveImageSrc(url){
 }
 
 function cacheOpaqueInBackground(url){
+  startBgTask();
   fetch(url, {mode:"no-cors", referrerPolicy:"no-referrer"})
     .then(resp=>resp.blob())
     .then(blob=>{ if(blob && blob.size>0) return storeAsset(url, blob).catch(()=>{}); })
-    .catch(()=>{});
+    .catch(()=>{})
+    .finally(endBgTask);
 }
 
 function extractImageUrls(html){
@@ -708,20 +728,25 @@ function extractImageUrls(html){
   return out;
 }
 async function prefetchImagesForEntry(entry){
-  const urls = extractImageUrls(entry.content);
-  if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
-  for(const url of urls){
-    const existing = await getCachedAsset(url);
-    if(existing) continue;
-    try{
-      const resp = await fetch(url, {referrerPolicy:"no-referrer"});
-      if(resp.ok){
-        const blob = await resp.blob();
-        await storeAsset(url, blob).catch(()=>{});
-        continue;
-      }
-    }catch(e){ }
-    cacheOpaqueInBackground(url);
+  startBgTask();
+  try {
+    const urls = extractImageUrls(entry.content);
+    if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
+    for(const url of urls){
+      const existing = await getCachedAsset(url);
+      if(existing) continue;
+      try{
+        const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+        if(resp.ok){
+          const blob = await resp.blob();
+          await storeAsset(url, blob).catch(()=>{});
+          continue;
+        }
+      }catch(e){ }
+      cacheOpaqueInBackground(url);
+    }
+  } finally {
+    endBgTask();
   }
 }
 async function setProtection(entry, protectedFlag){
@@ -871,32 +896,6 @@ async function mfMarkStatus(account, entryIds, status){
 }
 async function mfToggleBookmark(account, entryId){
   return mfFetch(account, `/v1/entries/${Number(entryId)}/bookmark`, {method:"PUT"});
-}
-
-/* ============================= NEWSBLUR API ============================= */
-
-async function loginToNewsBlur(account) {
-  // If a login is already in progress, wait for it
-  if (NB_STATE.isLoggingIn) return NB_STATE.isLoggingIn;
-
-  NB_STATE.isLoggingIn = (async () => {
-    const loginData = new URLSearchParams();
-    loginData.append("username", account.username);
-    loginData.append("password", account.password);
-
-    const res = await fetch(account.url + "/api/login", {
-      method: "POST",
-      body: loginData,
-      credentials: "include" // Browser saves the session cookie here
-    });
-
-    const json = await res.json();
-    NB_STATE.isAuthenticated = json.authenticated === true;
-    NB_STATE.isLoggingIn = null;
-    return NB_STATE.isAuthenticated;
-  })();
-
-  return NB_STATE.isLoggingIn;
 }
 
 /* ============================= NEWSBLUR API ============================= */
@@ -1296,6 +1295,10 @@ window.deleteAccount = async (id) => {
   CFG.selectedFeeds = CFG.selectedFeeds.filter(f => f.accountId !== id);
   saveConfig(CFG);
   renderAccountsList();
+  
+  $("#feed-picker").classList.add("hidden");
+  feedPickerChoices = null;
+
   for(const f of toRemove) await removeFeed(f.id);
   toast("Account removed");
 };
@@ -1366,6 +1369,7 @@ let feedPickerChoices = null;
 $("#btn-manage-feeds").addEventListener("click", async ()=>{
   if(CFG.accounts.length === 0){ toast("Please add an account first."); return; }
   toast("Loading feeds...");
+  startBgTask();
   try {
     feedPickerChoices = new Map();
     const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
@@ -1383,18 +1387,51 @@ $("#btn-manage-feeds").addEventListener("click", async ()=>{
         });
       });
     }
+
+    const accSelect = $("#feed-picker-account");
+    accSelect.innerHTML = "";
+    CFG.accounts.forEach(acc => {
+      const opt = document.createElement("option");
+      opt.value = acc.id; opt.textContent = acc.name;
+      accSelect.appendChild(opt);
+    });
+    
     renderFeedPicker();
     $("#feed-picker").classList.remove("hidden");
     toast("Feeds loaded");
   } catch(e) {
     toast("Could not load feeds: "+e.message);
+  } finally {
+    endBgTask();
   }
+});
+
+$("#feed-picker-account").addEventListener("change", renderFeedPicker);
+
+$("#btn-select-all").addEventListener("click", () => {
+  if(!feedPickerChoices) return;
+  const activeAccId = $("#feed-picker-account").value;
+  [...feedPickerChoices.values()].filter(f => f.accountId === activeAccId).forEach(f => f.checked = true);
+  renderFeedPicker();
+});
+
+$("#btn-deselect-all").addEventListener("click", () => {
+  if(!feedPickerChoices) return;
+  const activeAccId = $("#feed-picker-account").value;
+  [...feedPickerChoices.values()].filter(f => f.accountId === activeAccId).forEach(f => f.checked = false);
+  renderFeedPicker();
 });
 
 function renderFeedPicker(){
   const list = $("#feed-picker-list");
   list.innerHTML = "";
-  [...feedPickerChoices.values()].sort((a,b)=>a.title.localeCompare(b.title)).forEach(f=>{
+  const activeAccId = $("#feed-picker-account").value;
+  if(!feedPickerChoices || !activeAccId) return;
+
+  [...feedPickerChoices.values()]
+    .filter(f => f.accountId === activeAccId)
+    .sort((a,b)=>a.title.localeCompare(b.title))
+    .forEach(f=>{
     const row = document.createElement("div");
     row.className = "chk-row";
     const cb = document.createElement("input");
@@ -1518,17 +1555,22 @@ async function removeFeed(feedUid){
 
 /* ============================= SYNC ============================= */
 async function syncFeed(feedObj){
-  const account = CFG.accounts.find(a => a.id === feedObj.accountId);
-  if(!account) return;
-  const entries = await apiGetUnreadEntries(account, feedObj.rawId);
+  startBgTask();
+  try {
+    const account = CFG.accounts.find(a => a.id === feedObj.accountId);
+    if(!account) return;
+    const entries = await apiGetUnreadEntries(account, feedObj.rawId);
 
-  for(const e of entries){
-    const existing = await getEntry(e.id);
-    if(existing){ e.status = existing.status; e.starred = existing.starred; }
-  }
-  await putEntries(entries);
-  if(CFG.imageCacheMode === "all"){
-    for(const e of entries){ await prefetchImagesForEntry(e); }
+    for(const e of entries){
+      const existing = await getEntry(e.id);
+      if(existing){ e.status = existing.status; e.starred = existing.starred; }
+    }
+    await putEntries(entries);
+    if(CFG.imageCacheMode === "all"){
+      for(const e of entries){ await prefetchImagesForEntry(e); }
+    }
+  } finally {
+    endBgTask();
   }
 }
 async function syncAllFeeds(){
@@ -1536,14 +1578,18 @@ async function syncAllFeeds(){
   for(const f of CFG.selectedFeeds){ await syncFeed(f).catch(()=>{}); }
   await refreshCounters();
 }
+
 async function refreshCounters(){
-  const countersByAcc = {};
-  for (const acc of CFG.accounts) {
-    try { countersByAcc[acc.id] = await apiGetCounters(acc); } catch(e) { }
+  const allEntries = await idbGetAll("entries");
+  const countsByFeed = {};
+  for(const e of allEntries){
+    if(e.status === "unread"){
+      countsByFeed[e.feedId] = (countsByFeed[e.feedId] || 0) + 1;
+    }
   }
   for(const f of CFG.selectedFeeds){
-    const counts = countersByAcc[f.accountId];
-    const rec = { id: f.id, title: f.title, unreadCount: (counts && counts[f.rawId]) || 0 };
+    const unreadCount = countsByFeed[f.id] || 0;
+    const rec = { id: f.id, title: f.title, unreadCount: unreadCount };
     await tx("feedsCache","readwrite", store=>store.put(rec));
   }
 }
