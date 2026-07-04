@@ -344,6 +344,8 @@
         </div>
       </fieldset>
 
+      <p class="muted" style="text-align:center; font-size:11px; margin:1.4em 0 0;">NRP <span id="app-version-label"></span></p>
+
       <div class="row" style="margin:1.2em 0 2em;">
         <button id="btn-save-config" class="primary grow">Save configuration</button>
       </div>
@@ -416,6 +418,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
+const APP_VERSION = "0.0.3"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -658,6 +661,7 @@ async function generateThumbnailBlob(srcObjUrl, maxSize) {
     img.onerror = reject; img.src = srcObjUrl;
   });
 }
+
 async function resolveThumbnailSrc(url){
   if(!url) return url;
   const thumbKey = "thumb_" + url;
@@ -671,22 +675,25 @@ async function resolveThumbnailSrc(url){
     return obj;
   }
 
+  // Ensures the full-res image is cached, but only fetches over the network if it isn't already.
   const fullSrc = await resolveImageSrc(url);
-  if (fullSrc === url) return url;
-  
+  const fullRec = await getCachedAsset(url);
+  if(!fullRec || !fullRec.blob){
+    // No usable local blob (e.g. blocked by CORS) - nothing to downscale, nothing worth persisting.
+    return fullSrc;
+  }
+
   try {
-    const thumbBlob = await generateThumbnailBlob(fullSrc, 144);
-    if (thumbBlob) {
-      await storeAsset(thumbKey, thumbBlob);
-      const obj = URL.createObjectURL(thumbBlob);
-      objectUrlCache.set(thumbKey, obj);
-      return obj;
-    }
-  } catch(e) { }
-
-  return fullSrc;
+    let thumbBlob = await generateThumbnailBlob(fullSrc, 144);
+    if(!thumbBlob) thumbBlob = fullRec.blob; // already small enough - reuse it so we don't redo this work every time
+    await storeAsset(thumbKey, thumbBlob);
+    const obj = URL.createObjectURL(thumbBlob);
+    objectUrlCache.set(thumbKey, obj);
+    return obj;
+  } catch(e) {
+    return fullSrc;
+  }
 }
-
 async function resolveImageSrc(url){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
@@ -1172,7 +1179,7 @@ function toast(msg){
 /* ============================= CONFIG SCREEN LOGIC ============================= */
 function populateConfigForm(){
   renderAccountsList();
-  
+  $("#app-version-label").textContent = "v" + APP_VERSION;
   $("#cfg-wb-url").value = CFG.wallabagUrl;
   $("#cfg-wb-client-id").value = CFG.wallabagClientId;
   $("#cfg-wb-client-secret").value = CFG.wallabagClientSecret;
