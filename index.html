@@ -418,7 +418,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.3"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.4"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -719,7 +719,14 @@ async function resolveImageSrc(url){
   return url;
 }
 
+const opaqueAttempted = new Map(); // url -> timestamp of last attempt
+const OPAQUE_RETRY_MS = 10 * 60 * 1000; // don't retry a known-uncacheable image for 10 minutes
+
 function cacheOpaqueInBackground(url){
+  const last = opaqueAttempted.get(url);
+  if(last && (Date.now() - last) < OPAQUE_RETRY_MS) return;
+  opaqueAttempted.set(url, Date.now());
+
   startBgTask();
   fetch(url, {mode:"no-cors", referrerPolicy:"no-referrer"})
     .then(resp=>resp.blob())
@@ -1791,7 +1798,12 @@ function findLinkTarget(contentDiv, entry){
   return entry.enclosureUrl || null;
 }
 
-async function openArticle(entryId){
+function updateScreen(id, opts){ // like navigate(), but doesn't touch history
+  lastOpts = opts; showScreen(id, opts);
+}
+
+async function openArticle(entryId, opts){
+  opts = opts || {};
   const entry = await getEntry(entryId);
   if(!entry) return;
   currentEntry = entry;
@@ -1810,11 +1822,16 @@ async function openArticle(entryId){
   wbBtn.addEventListener("click", ()=>sendToWallabag());
 
   const nextBtn = document.createElement("button");
-  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}"; 
+  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}";
   nextBtn.addEventListener("click", ()=>nextArticle());
 
-  navigate("screen-article", {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]});
-  $("#screen-article").scrollTop = 0; 
+  const screenOpts = {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
+  if(opts.replace){
+    updateScreen("screen-article", screenOpts);
+  }else{
+    navigate("screen-article", screenOpts);
+    $("#screen-article").scrollTop = 0;
+  }
 
   $("#art-title").textContent = entry.title;
   $("#art-title").onclick = ()=>window.open(entry.url, "_blank", "noopener");
@@ -1848,7 +1865,7 @@ function nextArticle(){
   if(!currentEntry || lastArticleOrder.length===0) return;
   const idx = lastArticleOrder.indexOf(currentEntry.id);
   if(idx === -1 || idx === lastArticleOrder.length-1){ toast("No more articles in this list"); return; }
-  openArticle(lastArticleOrder[idx+1]);
+  openArticle(lastArticleOrder[idx+1], {replace:true});
 }
 
 async function markRead(entry){
@@ -1878,7 +1895,7 @@ async function toggleStar(){
     const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
     if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred); 
   } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred: currentEntry.starred}); }
-  openArticle(currentEntry.id);
+  openArticle(currentEntry.id, {replace:true});
 }
 async function sendToWallabag(){
   if(!currentEntry) return;
