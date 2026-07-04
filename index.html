@@ -144,6 +144,11 @@
 
   /* config */
   .chk-list{ max-height:260px; overflow-y:auto; overflow-x:hidden; border:1px solid var(--border); border-radius:2px; width:100%; max-width:100%; box-sizing:border-box; }
+/* Add this to allow the contents to scroll horizontally if needed */
+#oversized-list {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
   .chk-row{ display:flex; align-items:center; gap:.6em; padding:.5em .7em; border-bottom:1px solid var(--border); }
   .chk-row:last-child{ border-bottom:none; }
   .chk-row input{ width:auto; }
@@ -1700,23 +1705,22 @@ function renderOversizedLog(){
     container.innerHTML = '<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">None</div></div>';
     return;
   }
-  list.slice().sort((a,b)=>b.size-a.size).forEach(item=>{
-    const row = document.createElement("div");
-    row.className = "chk-row";
-    row.style.display = "block"; 
-    row.style.width = "100%";
-    row.style.minWidth = "0";
-    row.style.boxSizing = "border-box";
-    row.style.overflow = "hidden";
-    
-    const sizeMb = (item.size/1048576).toFixed(2);
-    const seen = new Date(item.lastSeen).toLocaleString();
-    row.innerHTML = `<div style="min-width:0; max-width:100%;">
-      <div style="font-size:12px; overflow-x:auto; white-space:nowrap; max-width:100%; -webkit-overflow-scrolling:touch;">${escapeHtml(item.url)}</div>
-      <div class="muted" style="font-size:10px; margin-top:.15em;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
-    </div>`;
-    container.appendChild(row);
-  });
+// Inside renderOversizedLog function:
+list.slice().sort((a,b)=>b.size-a.size).forEach(item=>{
+  const row = document.createElement("div");
+  row.className = "chk-row";
+  // REMOVE: row.style.display, width, etc. Let CSS handle the layout.
+  
+  const sizeMb = (item.size/1048576).toFixed(2);
+  const seen = new Date(item.lastSeen).toLocaleString();
+  
+  // The wrapper below ensures the long URL triggers the horizontal scroll
+  row.innerHTML = `<div style="min-width:0; width:100%;">
+    <div style="font-size:12px; white-space:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;">${escapeHtml(item.url)}</div>
+    <div class="muted" style="font-size:10px; margin-top:.15em;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
+  </div>`;
+  container.appendChild(row);
+});
 }
 $("#btn-clear-oversized").addEventListener("click", ()=>{
   saveOversizedLog([]);
