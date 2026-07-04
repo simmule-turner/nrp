@@ -38,6 +38,7 @@
   button.icon{
     width:44px; height:44px; font-size:1.75em;
     display:inline-flex; align-items:center; justify-content:center; padding:0;
+    flex:0 0 44px;
   }
   button.chip{ padding:.4em .8em; min-height:auto; font-size:13px; font-weight:600; }
   input[type=text],input[type=password],input[type=number],input[type=url],select{
@@ -97,6 +98,7 @@
   .empty .big{ font-size:13px; font-family:var(--font-ui); letter-spacing:.04em; margin-bottom:.5em; }
 
   /* article list */
+  .sticky-header{ position:sticky; top:0; z-index:5; background:var(--bg); flex:0 0 auto; }
   .tabs{ display:flex; border-bottom:1px solid var(--border); }
   .tab{ flex:1; text-align:center; padding:1em 0; min-height:44px; background:none; border:none; border-radius:0; border-bottom:3px solid transparent; color:var(--muted); font-weight:600; }
   .tab.active{ color:var(--fg); border-bottom-color:var(--accent); }
@@ -123,7 +125,7 @@
   .art-content pre{ overflow-x:auto; background:var(--raised); padding:.7em; border-radius:2px; }
 
   /* config */
-  .chk-list{ max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:2px; }
+  .chk-list{ max-height:260px; overflow-y:auto; overflow-x:hidden; border:1px solid var(--border); border-radius:2px; width:100%; box-sizing:border-box; }
   .chk-row{ display:flex; align-items:center; gap:.6em; padding:.5em .7em; border-bottom:1px solid var(--border); }
   .chk-row:last-child{ border-bottom:none; }
   .chk-row input{ width:auto; }
@@ -234,6 +236,10 @@
             <button id="btn-add-folder">Add</button>
           </div>
           <div id="folder-chip-list" class="row wrap" style="margin-top:.6em; gap:.4em;"></div>
+        </div>
+        <div class="row between" style="margin-top:1em;">
+          <label style="margin:0;">Hide feeds with no unread articles</label>
+          <input id="cfg-hide-empty-feeds" type="checkbox">
         </div>
       </fieldset>
 
@@ -381,20 +387,22 @@
 
   <!-- ===== ARTICLE LIST SCREEN ===== -->
   <section id="screen-articles" class="screen hidden">
-    <div class="tabs">
-      <button class="tab" data-filter="unread">Unread</button>
-      <button class="tab" data-filter="all">All</button>
-      <button class="tab" data-filter="starred">Starred</button>
-    </div>
-    <div class="row between" style="padding:.5em .9em;">
-      <span class="muted">Sort</span>
-      <span class="row" style="gap:.4em;">
-        <select id="art-sort-field">
-          <option value="date">Date</option>
-          <option value="size">Size</option>
-        </select>
-        <button id="art-sort-dir" class="icon">&#8595;</button>
-      </span>
+    <div class="sticky-header">
+      <div class="tabs">
+        <button class="tab" data-filter="unread">Unread</button>
+        <button class="tab" data-filter="all">All</button>
+        <button class="tab" data-filter="starred">Starred</button>
+      </div>
+      <div class="row between" style="padding:.5em .9em;">
+        <span class="muted">Sort</span>
+        <span class="row" style="gap:.4em;">
+          <select id="art-sort-field">
+            <option value="date">Date</option>
+            <option value="size">Size</option>
+          </select>
+          <button id="art-sort-dir" class="icon">&#8595;</button>
+        </span>
+      </div>
     </div>
     <div id="article-list"></div>
   </section>
@@ -429,7 +437,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.5"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.6"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -444,7 +452,7 @@ const DEFAULT_CFG = {
   startupMode:"feedlist",
   density:"small", previewLines:3, fontSize:16,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
-  folderMode:"none", folders:[],
+  folderMode:"none", folders:[], hideEmptyFeeds:false,
   toolbarPlacement: "top",
   selectedFeeds:[] // [{id: accountId___feedId, accountId, title, folderName}]
 };
@@ -1245,7 +1253,15 @@ function updateScreen(id, opts){ // like navigate(), but doesn't touch the back-
 let lastOpts = {};
 $("#btn-back").addEventListener("click", ()=>{
   const prev = navStack.pop();
-  if(prev){ lastOpts = prev.opts; showScreen(prev.id, prev.opts); }
+  if(!prev) return;
+  lastOpts = prev.opts; showScreen(prev.id, prev.opts);
+  // Returning to a list screen should reflect anything that changed while we were away
+  // (an article just marked read, updated unread counts, etc.) rather than showing stale state.
+  if(prev.id === "screen-articles"){
+    renderArticleList();
+  }else if(prev.id === "screen-feeds"){
+    refreshCounters().then(renderFeedList);
+  }
 });
 $("#btn-config").addEventListener("click", ()=>{
   if(currentScreen !== "screen-config"){
@@ -1288,6 +1304,7 @@ function populateConfigForm(){
 
   $("#cfg-folder-mode").value = CFG.folderMode;
   $("#cfg-toolbar-placement").value = CFG.toolbarPlacement || "top";
+  $("#cfg-hide-empty-feeds").checked = !!CFG.hideEmptyFeeds;
   $("#manual-folder-ui").classList.toggle("hidden", CFG.folderMode !== "manual");
   renderFolderChips();
 
@@ -1578,11 +1595,12 @@ function renderOversizedLog(){
   list.slice().sort((a,b)=>b.size-a.size).forEach(item=>{
     const row = document.createElement("div");
     row.className = "chk-row";
+    row.style.display = "block"; // stack full width so the scrollable url line below has room
     const sizeMb = (item.size/1048576).toFixed(2);
     const seen = new Date(item.lastSeen).toLocaleString();
-    row.innerHTML = `<div class="grow" style="min-width:0;">
-      <div style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.url)}</div>
-      <div class="muted" style="font-size:10px;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
+    row.innerHTML = `<div style="min-width:0; max-width:100%;">
+      <div style="font-size:12px; overflow-x:auto; white-space:nowrap; max-width:100%; -webkit-overflow-scrolling:touch;">${escapeHtml(item.url)}</div>
+      <div class="muted" style="font-size:10px; margin-top:.15em;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
     </div>`;
     container.appendChild(row);
   });
@@ -1643,6 +1661,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
   CFG.toolbarPlacement = $("#cfg-toolbar-placement").value;
+  CFG.hideEmptyFeeds = $("#cfg-hide-empty-feeds").checked;
 
   const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
   if(feedPickerChoices){
@@ -1737,10 +1756,16 @@ async function renderFeedList(){
   let rows = CFG.selectedFeeds.map(f=>({
     id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0, folderName:f.folderName||null
   }));
+  if(CFG.hideEmptyFeeds){
+    rows = rows.filter(r=>r.unread>0);
+  }
   const container = $("#feed-list");
   container.innerHTML = "";
   if(rows.length===0){
-    container.innerHTML = '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds.</div>';
+    const msg = (CFG.hideEmptyFeeds && CFG.selectedFeeds.length>0)
+      ? '<div class="empty"><div class="big">All caught up</div>No unread articles right now.</div>'
+      : '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds.</div>';
+    container.innerHTML = msg;
     return;
   }
   const sortRows = arr => arr.sort((a,b)=>{
