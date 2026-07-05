@@ -327,8 +327,11 @@ fieldset legend {
         </select>
         <label for="cfg-startup-mode">Startup screen</label>
         <select id="cfg-startup-mode"></select>
-        <label for="cfg-density">Article list display</label>
-        <select id="cfg-density">
+        <div class="row between" style="margin-top:1em;">
+          <label style="margin:0;">Never fetch images</label>
+          <input id="cfg-never-fetch-images" type="checkbox">
+        </div>
+        <label for="cfg-density">Article list display</label>        <select id="cfg-density">
           <option value="text">Text only</option>
           <option value="small">Text &amp; small image</option>
           <option value="large">Text &amp; large image</option>
@@ -602,6 +605,7 @@ const DEFAULT_CFG = {
   accentColor:"#B8752E",
   startupMode:"feedlist",
   density:"small", previewLines:3, fontSize:16,
+  neverFetchImages:false,
   fsFeed: 14, fwFeed: false,
   fsArtListTitle: 15, fwArtListTitle: true,
   fsArtListPreview: 12, fwArtListPreview: false,
@@ -1008,6 +1012,7 @@ function extractImageUrls(html){
   return out;
 }
 async function prefetchImagesForEntry(entry){
+  if(CFG.neverFetchImages) return;
   startBgTask();
   try {
     const urls = extractImageUrls(entry.content);
@@ -1473,6 +1478,7 @@ function populateConfigForm(){
   $("#cfg-light-bg").value = CFG.lightBg; $("#cfg-light-fg").value = CFG.lightFg;
   $("#cfg-dark-bg").value = CFG.darkBg; $("#cfg-dark-fg").value = CFG.darkFg;
   
+  $("#cfg-never-fetch-images").checked = !!CFG.neverFetchImages;
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
@@ -1637,10 +1643,41 @@ function refreshStartupOptions(){
 });
   
 $("#preset-defaults").addEventListener("click", ()=>{
-  $("#cfg-theme-mode").value = "system";
-  $("#cfg-light-bg").value = "#F5F6F3"; $("#cfg-light-fg").value = "#1B1D1F";
-  $("#cfg-dark-bg").value = "#15171A"; $("#cfg-dark-fg").value = "#E7E4DA";
+  // Toolbar / startup / layout
+  $("#cfg-toolbar-placement").value = DEFAULT_CFG.toolbarPlacement;
+  $("#cfg-never-fetch-images").checked = DEFAULT_CFG.neverFetchImages;
+  $("#cfg-density").value = DEFAULT_CFG.density;
+  $("#cfg-preview-lines").value = DEFAULT_CFG.previewLines;
+
+  // Typography
+  setSliderVal("#cfg-fs-feed", DEFAULT_CFG.fsFeed);
+  $("#cfg-fw-feed").checked = DEFAULT_CFG.fwFeed;
+  $("#cfg-ff-feed").value = DEFAULT_CFG.ffFeed;
+
+  setSliderVal("#cfg-fs-art-list-title", DEFAULT_CFG.fsArtListTitle);
+  $("#cfg-fw-art-list-title").checked = DEFAULT_CFG.fwArtListTitle;
+  $("#cfg-ff-art-list-title").value = DEFAULT_CFG.ffArtListTitle;
+
+  setSliderVal("#cfg-fs-art-list-preview", DEFAULT_CFG.fsArtListPreview);
+  $("#cfg-fw-art-list-preview").checked = DEFAULT_CFG.fwArtListPreview;
+  $("#cfg-ff-art-list-preview").value = DEFAULT_CFG.ffArtListPreview;
+
+  setSliderVal("#cfg-fs-art-title", DEFAULT_CFG.fsArtTitle);
+  $("#cfg-fw-art-title").checked = DEFAULT_CFG.fwArtTitle;
+  $("#cfg-ff-art-title").value = DEFAULT_CFG.ffArtTitle;
+
+  setSliderVal("#cfg-fs-art-body", DEFAULT_CFG.fsArtBody);
+  $("#cfg-fw-art-body").checked = DEFAULT_CFG.fwArtBody;
+  $("#cfg-ff-art-body").value = DEFAULT_CFG.ffArtBody;
+
+  // Theme mode & colors
+  $("#cfg-theme-mode").value = DEFAULT_CFG.themeMode;
+  $("#cfg-light-bg").value = DEFAULT_CFG.lightBg; $("#cfg-light-fg").value = DEFAULT_CFG.lightFg;
+  $("#cfg-dark-bg").value = DEFAULT_CFG.darkBg; $("#cfg-dark-fg").value = DEFAULT_CFG.darkFg;
+
+  toast("Appearance reset to defaults \u2014 click Save to apply");
 });
+
 
 $("#cfg-folder-mode").addEventListener("change", ()=>{
   $("#manual-folder-ui").classList.toggle("hidden", $("#cfg-folder-mode").value !== "manual");
@@ -1870,9 +1907,9 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.ffArtTitle = $("#cfg-ff-art-title").value;
   CFG.ffArtBody = $("#cfg-ff-art-body").value;
 
+  CFG.neverFetchImages = $("#cfg-never-fetch-images").checked;
   CFG.density = $("#cfg-density").value;
-  CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
-  CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
+  CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;    CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
   CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
@@ -1923,7 +1960,7 @@ async function syncFeed(feedObj){
       if(existing){ e.status = existing.status; e.starred = existing.starred; }
     }
     await putEntries(entries);
-    if(CFG.imageCacheMode === "all"){
+    if(CFG.imageCacheMode === "all" && !CFG.neverFetchImages){
       for(const e of entries){ await prefetchImagesForEntry(e); }
     }
   } finally {
@@ -2146,7 +2183,7 @@ async function renderArticleList(){
     const previewText = stripTags(e.content).slice(0, 220);
     const linesCss = Math.max(1, CFG.previewLines-1);
     let thumbHtml = "";
-    if(CFG.density !== "text"){
+    if(CFG.density !== "text" && !CFG.neverFetchImages){
       const imgUrl = e.enclosureUrl || firstImageUrl(e.content);
       if(imgUrl) thumbHtml = `<img class="thumb${CFG.density==='large'?' large':''}" data-src="${escapeAttr(imgUrl)}">`;
     }
@@ -2221,7 +2258,10 @@ async function openArticle(entryId, opts){
 
   const inlineImgs = contentDiv.querySelectorAll("img");
   const enc = $("#art-enclosure");
-  if(inlineImgs.length > 0){
+  if(CFG.neverFetchImages){
+    inlineImgs.forEach(img=>img.remove());
+    enc.classList.add("hidden");
+  }else if(inlineImgs.length > 0){
     enc.classList.add("hidden");
     for(const img of inlineImgs){
       const orig = img.getAttribute("src");
@@ -2234,7 +2274,7 @@ async function openArticle(entryId, opts){
     resolveImageSrc(entry.enclosureUrl).then(src=>{ enc.src = src; });
   }else{ enc.classList.add("hidden"); }
 
-  if(CFG.imageCacheMode === "on-read"){ prefetchImagesForEntry(entry); }
+  if(CFG.imageCacheMode === "on-read" && !CFG.neverFetchImages){ prefetchImagesForEntry(entry); }
   if(entry.status !== "read"){ await markRead(entry); }
 }
 
