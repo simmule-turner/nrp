@@ -313,10 +313,6 @@
         </select>
         <label for="cfg-startup-mode">Startup screen</label>
         <select id="cfg-startup-mode"></select>
-        <div class="row between" style="margin-top:0.8em;">
-          <label style="margin:0;">Always show images</label>
-          <input id="cfg-always-images" type="checkbox">
-        </div>
         <label for="cfg-density">Article list display</label>
         <select id="cfg-density">
           <option value="text">Text only</option>
@@ -585,7 +581,7 @@ const DEFAULT_CFG = {
   wallabagUrl:"", wallabagClientId:"", wallabagClientSecret:"",
   wallabagUsername:"", wallabagPassword:"",
   wallabagAccessToken:null, wallabagRefreshToken:null, wallabagTokenExpiry:0,
-  alwaysShowImages:true, imageCacheMode:"on-read",
+ imageCacheMode:"on-read",
   themeMode:"system",
   lightBg:"#F5F6F3", lightFg:"#1B1D1F",
   darkBg:"#15171A", darkFg:"#E7E4DA",
@@ -1457,7 +1453,6 @@ function populateConfigForm(){
   $("#cfg-wb-client-secret").value = CFG.wallabagClientSecret;
   $("#cfg-wb-username").value = CFG.wallabagUsername;
   $("#cfg-wb-password").value = CFG.wallabagPassword;
-  $("#cfg-always-images").checked = CFG.alwaysShowImages;
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
   
   $("#cfg-theme-mode").value = CFG.themeMode;
@@ -1837,7 +1832,6 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.wallabagClientSecret = $("#cfg-wb-client-secret").value.trim();
   CFG.wallabagUsername = $("#cfg-wb-username").value.trim();
   CFG.wallabagPassword = $("#cfg-wb-password").value;
-  CFG.alwaysShowImages = $("#cfg-always-images").checked;
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
   
   CFG.themeMode = $("#cfg-theme-mode").value;
@@ -2107,7 +2101,7 @@ async function renderArticleList(){
     const previewText = stripTags(e.content).slice(0, 220);
     const linesCss = Math.max(1, CFG.previewLines-1);
     let thumbHtml = "";
-    if(CFG.density !== "text" && (CFG.alwaysShowImages)){
+    if(CFG.density !== "text"){
       const imgUrl = e.enclosureUrl || firstImageUrl(e.content);
       if(imgUrl) thumbHtml = `<img class="thumb${CFG.density==='large'?' large':''}" data-src="${escapeAttr(imgUrl)}">`;
     }
