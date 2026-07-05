@@ -372,7 +372,10 @@
         <option value="consolas">Consolas (Modern Code)</option>
     </optgroup>
           </select>
-          <input id="cfg-fs-feed" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
+          <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
+          <input id="cfg-fs-feed" type="range" min="10" max="40" class="grow">
+          <span id="cfg-fs-feed-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+        </div>
           <label style="margin:0"><input id="cfg-fw-feed" type="checkbox"> Bold</label>
         </div>
 
@@ -393,7 +396,11 @@
         <option value="consolas">Consolas (Modern Code)</option>
     </optgroup>
           </select>
-          <input id="cfg-fs-art-list-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
+<div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
+          <input id="cfg-fs-art-list-title" type="range" min="10" max="40" class="grow">
+          <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+        </div>
+          
           <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
         </div>
 
@@ -414,7 +421,10 @@
         <option value="consolas">Consolas (Modern Code)</option>
     </optgroup>
           </select>
-          <input id="cfg-fs-art-list-preview" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
+          <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
+          <input id="cfg-fs-art-list-preview" type="range" min="10" max="40" class="grow">
+          <span id="cfg-fs-art-list-preview-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+        </div>
           <label style="margin:0"><input id="cfg-fw-art-list-preview" type="checkbox"> Bold</label>
         </div>
 
@@ -435,7 +445,10 @@
         <option value="consolas">Consolas (Modern Code)</option>
     </optgroup>
           </select>
-          <input id="cfg-fs-art-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
+          <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
+          <input id="cfg-fs-art-title" type="range" min="10" max="40" class="grow">
+          <span id="cfg-fs-art-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+        </div>
           <label style="margin:0"><input id="cfg-fw-art-title" type="checkbox"> Bold</label>
         </div>
 
@@ -456,7 +469,10 @@
         <option value="consolas">Consolas (Modern Code)</option>
     </optgroup>
           </select>
-          <input id="cfg-fs-art-body" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
+          <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
+          <input id="cfg-fs-art-body" type="range" min="10" max="40" class="grow">
+          <span id="cfg-fs-art-body-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+        </div>
           <label style="margin:0"><input id="cfg-fw-art-body" type="checkbox"> Bold</label>
         </div>  
       </fieldset>
@@ -1444,6 +1460,11 @@ function toast(msg){
 }
 
 /* ============================= CONFIG SCREEN LOGIC ============================= */
+  const setSliderVal = (id, val) => {
+    $(id).value = val;
+    $(id + "-val").textContent = val + "px";
+  };
+
 function populateConfigForm(){
   renderAccountsList();
   $("#app-version-label").textContent = "v" + APP_VERSION;
@@ -1466,16 +1487,23 @@ function populateConfigForm(){
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
   
-  $("#cfg-fs-feed").value = CFG.fsFeed || 14;
+  //$("#cfg-fs-feed").value = CFG.fsFeed || 14;
   $("#cfg-fw-feed").checked = CFG.fwFeed;
-  $("#cfg-fs-art-list-title").value = CFG.fsArtListTitle || 15;
+  //$("#cfg-fs-art-list-title").value = CFG.fsArtListTitle || 15;
   $("#cfg-fw-art-list-title").checked = CFG.fwArtListTitle;
-  $("#cfg-fs-art-list-preview").value = CFG.fsArtListPreview || 12;
+  //$("#cfg-fs-art-list-preview").value = CFG.fsArtListPreview || 12;
   $("#cfg-fw-art-list-preview").checked = CFG.fwArtListPreview;
-  $("#cfg-fs-art-title").value = CFG.fsArtTitle || 22;
+  //$("#cfg-fs-art-title").value = CFG.fsArtTitle || 22;
   $("#cfg-fw-art-title").checked = CFG.fwArtTitle;
-  $("#cfg-fs-art-body").value = CFG.fsArtBody || 16;
+  //$("#cfg-fs-art-body").value = CFG.fsArtBody || 16;
   $("#cfg-fw-art-body").checked = CFG.fwArtBody;
+
+  
+  setSliderVal("#cfg-fs-feed", CFG.fsFeed || 14);
+  setSliderVal("#cfg-fs-art-list-title", CFG.fsArtListTitle || 15);
+  setSliderVal("#cfg-fs-art-list-preview", CFG.fsArtListPreview || 12);
+  setSliderVal("#cfg-fs-art-title", CFG.fsArtTitle || 22);
+  setSliderVal("#cfg-fs-art-body", CFG.fsArtBody || 16);
   
   $("#cfg-ff-feed").value = CFG.ffFeed || "georgia";
   $("#cfg-ff-art-list-title").value = CFG.ffArtListTitle || "georgia";
@@ -1619,6 +1647,14 @@ $("#cfg-font-size").addEventListener("input", ()=>{
   $("#font-size-label").textContent = $("#cfg-font-size").value + "px";
   document.documentElement.style.setProperty("--fs-base", $("#cfg-font-size").value+"px");
 });
+
+["feed", "art-list-title", "art-list-preview", "art-title", "art-body"].forEach(key => {
+  const el = $("#cfg-fs-" + key);
+  el.addEventListener("input", () => {
+    $("#cfg-fs-" + key + "-val").textContent = el.value + "px";
+  });
+});
+  
 $("#preset-defaults").addEventListener("click", ()=>{
   $("#cfg-theme-mode").value = "system";
   $("#cfg-light-bg").value = "#F5F6F3"; $("#cfg-light-fg").value = "#1B1D1F";
