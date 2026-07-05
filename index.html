@@ -1909,7 +1909,8 @@ $("#btn-save-config").addEventListener("click", async ()=>{
 
   CFG.neverFetchImages = $("#cfg-never-fetch-images").checked;
   CFG.density = $("#cfg-density").value;
-  CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;    CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
+  CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
+  CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
   CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
@@ -1989,8 +1990,20 @@ async function refreshCounters(){
 }
 
 /* ============================= FEED LIST SCREEN ============================= */
-let feedSort = {field:"name", dir:"asc"};
+const FEED_SORT_KEY = "nrp_feed_sort";
+const ART_SORT_KEY = "nrp_art_sort";
+function loadSortState(key, fallback){
+  try{
+    const raw = JSON.parse(localStorage.getItem(key));
+    if(raw && raw.field && raw.dir) return raw;
+  }catch(e){}
+  return fallback;
+}
+function saveSortState(key, state){ localStorage.setItem(key, JSON.stringify(state)); }
+
+let feedSort = loadSortState(FEED_SORT_KEY, {field:"name", dir:"asc"});
 const COLLAPSED_KEY = "nrp_collapsed_folders";
+
 let collapsedFolders = loadCollapsedFolders();
 function loadCollapsedFolders(){
   try{ return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY)||"[]")); } catch(e){ return new Set(); }
@@ -2079,13 +2092,17 @@ async function renderFeedList(){
     });
   }
 }
-$("#feed-sort-field").addEventListener("change", e=>{ feedSort.field=e.target.value; renderFeedList(); });
+$("#feed-sort-field").addEventListener("change", e=>{
+  feedSort.field=e.target.value;
+  saveSortState(FEED_SORT_KEY, feedSort);
+  renderFeedList();
+});
 $("#feed-sort-dir").addEventListener("click", ()=>{
   feedSort.dir = feedSort.dir==="asc" ? "desc" : "asc";
   $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  saveSortState(FEED_SORT_KEY, feedSort);
   renderFeedList();
 });
-
 /* pull-to-refresh */
 (function setupPullToRefresh(){
   const screen = $("#screen-feeds");
@@ -2116,7 +2133,7 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
 let currentFeedUid = null;
 let currentFolderName = null;
 let articleFilter = "unread";
-let artSort = {field:"date", dir:"desc"};
+let artSort = loadSortState(ART_SORT_KEY, {field:"date", dir:"desc"});
 let lastArticleOrder = [];
 
 function openArticleList(feedUid, feedTitle){
@@ -2142,14 +2159,19 @@ document.querySelectorAll(".tab").forEach(t=>{
     renderArticleList();
   });
 });
-$("#art-sort-field").addEventListener("change", e=>{ artSort.field=e.target.value; renderArticleList(); });
+
+$("#art-sort-field").addEventListener("change", e=>{
+  artSort.field=e.target.value;
+  saveSortState(ART_SORT_KEY, artSort);
+  renderArticleList();
+});
 $("#art-sort-dir").addEventListener("click", ()=>{
   artSort.dir = artSort.dir==="asc" ? "desc" : "asc";
   $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
-  
+  saveSortState(ART_SORT_KEY, artSort);
   renderArticleList();
 });
-
+  
 async function renderArticleList(){
   let entries;
   if(currentFolderName){
@@ -2324,9 +2346,15 @@ async function sendToWallabag(){
 }
 
 /* ============================= STARTUP ============================= */
-async function init(){
+
+  async function init(){
   await openDb();
   applyTheme(); setupManifest(); populateConfigForm();
+
+  $("#feed-sort-field").value = feedSort.field;
+  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  $("#art-sort-field").value = artSort.field;
+  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
 
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 
