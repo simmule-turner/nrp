@@ -339,8 +339,6 @@
             <input id="cfg-dark-fg" type="color">
           </div>
         </div>
-        <label for="cfg-font-size">Reading font size &mdash; <span id="font-size-label">16px</span></label>
-        <input id="cfg-font-size" type="range" min="12" max="26" step="1" value="16">
         <label for="cfg-density">Article list display</label>
         <select id="cfg-density">
           <option value="text">Text only</option>
@@ -374,7 +372,7 @@
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
           <input id="cfg-fs-feed" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-feed-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+          <span id="cfg-fs-feed-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-feed" type="checkbox"> Bold</label>
         </div>
@@ -398,7 +396,7 @@
           </select>
 <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
           <input id="cfg-fs-art-list-title" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+          <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
           
           <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
@@ -423,7 +421,7 @@
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
           <input id="cfg-fs-art-list-preview" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-list-preview-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+          <span id="cfg-fs-art-list-preview-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-art-list-preview" type="checkbox"> Bold</label>
         </div>
@@ -447,7 +445,7 @@
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
           <input id="cfg-fs-art-title" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+          <span id="cfg-fs-art-title-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-art-title" type="checkbox"> Bold</label>
         </div>
@@ -471,7 +469,7 @@
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
           <input id="cfg-fs-art-body" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-body-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
+          <span id="cfg-fs-art-body-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-art-body" type="checkbox"> Bold</label>
         </div>  
@@ -596,7 +594,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.11"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.12"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -696,7 +694,7 @@ function applyTheme(){
   document.documentElement.style.setProperty("--bg", colors.bg);
   document.documentElement.style.setProperty("--fg", colors.fg);
   document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
-  document.documentElement.style.setProperty("--fs-base", (CFG.fontSize||16)+"px");
+  document.documentElement.style.setProperty("--fs-base", "16px");
   
   // Custom Typography overrides
   document.documentElement.style.setProperty("--fs-feed", (CFG.fsFeed || 14) + "px");
@@ -1480,8 +1478,6 @@ function populateConfigForm(){
   $("#cfg-light-bg").value = CFG.lightBg; $("#cfg-light-fg").value = CFG.lightFg;
   $("#cfg-dark-bg").value = CFG.darkBg; $("#cfg-dark-fg").value = CFG.darkFg;
   
-  $("#cfg-font-size").value = CFG.fontSize;
-  $("#font-size-label").textContent = CFG.fontSize + "px";
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
@@ -1642,11 +1638,6 @@ function refreshStartupOptions(){
   const ok = [...startupSel.options].some(o=>o.value===String(prevValue));
   startupSel.value = ok ? String(prevValue) : "feedlist";
 }
-
-$("#cfg-font-size").addEventListener("input", ()=>{
-  $("#font-size-label").textContent = $("#cfg-font-size").value + "px";
-  document.documentElement.style.setProperty("--fs-base", $("#cfg-font-size").value+"px");
-});
 
 ["feed", "art-list-title", "art-list-preview", "art-title", "art-body"].forEach(key => {
   const el = $("#cfg-fs-" + key);
@@ -1871,9 +1862,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.themeMode = $("#cfg-theme-mode").value;
   CFG.lightBg = $("#cfg-light-bg").value; CFG.lightFg = $("#cfg-light-fg").value;
   CFG.darkBg = $("#cfg-dark-bg").value; CFG.darkFg = $("#cfg-dark-fg").value;
-  
-  CFG.fontSize = parseInt($("#cfg-font-size").value, 10) || 16;
-  
+    
   // Save Typography
   CFG.fsFeed = parseInt($("#cfg-fs-feed").value, 10) || 14;
   CFG.fwFeed = $("#cfg-fw-feed").checked;
