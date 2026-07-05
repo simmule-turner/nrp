@@ -2089,7 +2089,8 @@ document.querySelectorAll(".tab").forEach(t=>{
 $("#art-sort-field").addEventListener("change", e=>{ artSort.field=e.target.value; renderArticleList(); });
 $("#art-sort-dir").addEventListener("click", ()=>{
   artSort.dir = artSort.dir==="asc" ? "desc" : "asc";
-  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u2193" : "\u2191";
+  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  
   renderArticleList();
 });
 
