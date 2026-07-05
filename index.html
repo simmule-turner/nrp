@@ -272,10 +272,6 @@
           </div>
           <div id="feed-picker-list" class="chk-list"></div>
         </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Organization</legend>
         <label for="cfg-folder-mode">Group feeds into folders</label>
         <select id="cfg-folder-mode">
           <option value="none">No folders (flat list)</option>
@@ -294,7 +290,6 @@
           <input id="cfg-hide-empty-feeds" type="checkbox">
         </div>
       </fieldset>
-
       <fieldset>
         <legend>Wallabag</legend>
         <label for="cfg-wb-url">Base URL</label>
@@ -310,51 +305,17 @@
       </fieldset>
 
       <fieldset>
-        <legend>Images</legend>
-        <div class="row between">
-          <label style="margin:0;">Always show images</label>
-          <input id="cfg-always-images" type="checkbox">
-        </div>
-        <label for="cfg-image-cache-mode">Image caching</label>
-        <select id="cfg-image-cache-mode">
-          <option value="all">Cache all images on sync</option>
-          <option value="on-read">Cache images as read</option>
-        </select>
-      </fieldset>
-
-      <fieldset>
         <legend>Appearance</legend>
         <label for="cfg-toolbar-placement">Toolbar placement</label>
         <select id="cfg-toolbar-placement">
           <option value="top">Top</option>
           <option value="bottom">Bottom</option>
         </select>
-        <label for="cfg-theme-mode">Theme Mode</label>
-        <select id="cfg-theme-mode">
-          <option value="system">System Default</option>
-          <option value="light">Always Light</option>
-          <option value="dark">Always Dark</option>
-        </select>
-        <div class="row" style="margin-bottom:.6em;">
-          <button id="preset-defaults" class="grow chip">Reset to defaults</button>
-        </div>
-        <div class="row wrap" style="margin-bottom:.8em;">
-          <div class="grow" style="min-width: 45%;">
-            <label for="cfg-light-bg">Light Bg</label>
-            <input id="cfg-light-bg" type="color">
-          </div>
-          <div class="grow" style="min-width: 45%;">
-            <label for="cfg-light-fg">Light Fg</label>
-            <input id="cfg-light-fg" type="color">
-          </div>
-          <div class="grow" style="min-width: 45%;">
-            <label for="cfg-dark-bg">Dark Bg</label>
-            <input id="cfg-dark-bg" type="color">
-          </div>
-          <div class="grow" style="min-width: 45%;">
-            <label for="cfg-dark-fg">Dark Fg</label>
-            <input id="cfg-dark-fg" type="color">
-          </div>
+        <label for="cfg-startup-mode">Startup screen</label>
+        <select id="cfg-startup-mode"></select>
+        <div class="row between" style="margin-top:0.8em;">
+          <label style="margin:0;">Always show images</label>
+          <input id="cfg-always-images" type="checkbox">
         </div>
         <label for="cfg-density">Article list display</label>
         <select id="cfg-density">
@@ -364,12 +325,7 @@
         </select>
         <label for="cfg-preview-lines">Preview lines per article (incl. title)</label>
         <input id="cfg-preview-lines" type="number" min="2" max="10" value="3">
-        <label for="cfg-startup-mode">Startup screen</label>
-        <select id="cfg-startup-mode"></select>
-      </fieldset>
 
-      <fieldset>
-        <legend>Typography</legend>
         <label>Feed List</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.25em;">
           <select id="cfg-ff-feed" class="grow" style="flex: 7;">
@@ -489,11 +445,42 @@
           <span id="cfg-fs-art-body-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-art-body" type="checkbox"> Bold</label>
-        </div>  
+        </div>
+                <label for="cfg-theme-mode">Theme Mode</label>
+        <select id="cfg-theme-mode">
+          <option value="system">System Default</option>
+          <option value="light">Always Light</option>
+          <option value="dark">Always Dark</option>
+        </select>
+        <div class="row" style="margin-bottom:.6em;">
+          <button id="preset-defaults" class="grow chip">Reset to defaults</button>
+        </div>
+        <div class="row wrap" style="margin-bottom:.8em;">
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-light-bg">Light Bg</label>
+            <input id="cfg-light-bg" type="color">
+          </div>
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-light-fg">Light Fg</label>
+            <input id="cfg-light-fg" type="color">
+          </div>
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-dark-bg">Dark Bg</label>
+            <input id="cfg-dark-bg" type="color">
+          </div>
+          <div class="grow" style="min-width: 45%;">
+            <label for="cfg-dark-fg">Dark Fg</label>
+            <input id="cfg-dark-fg" type="color">
+          </div>
+        </div>
       </fieldset>
-
       <fieldset>
         <legend>Cache</legend>
+        <label for="cfg-image-cache-mode">Image caching</label>
+        <select id="cfg-image-cache-mode">
+          <option value="all">Cache all images on sync</option>
+          <option value="on-read">Cache images as read</option>
+        </select>
         <label for="cfg-cache-size">Max image cache size</label>
         <select id="cfg-cache-size">
           <option value="104857600">100 MB</option>
@@ -591,7 +578,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.14"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.15"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
