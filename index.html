@@ -30,11 +30,6 @@
     --font-family-list-preview: Georgia, serif;
     --font-family-title: Georgia, serif;
     --font-family-body: Georgia, serif;
-    .dynamic-font { font-family: var(--active-font-feed); }
-    .dynamic-font { font-family: var(--active-font-list-title); }
-    .dynamic-font { font-family: var(--active-font-list-preview); }
-    .dynamic-font { font-family: var(--active-font-title); }
-    .dynamic-font { font-family: var(--active-font-body); }
   }
   *{box-sizing:border-box;}
   html,body{height:100%;}
@@ -111,7 +106,7 @@
     cursor:pointer; min-height:44px;
   }
   .feed-row:active{ background:var(--raised); }
-  .feed-row .name{ flex:1; min-width:0; font-size:var(--fs-feed); font-weight:var(--fw-feed); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .feed-row .name{ flex:1; min-width:0; font-family:var(--font-family-feed); font-size:var(--fs-feed); font-weight:var(--fw-feed); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .empty{ padding:2.5em 1.4em; text-align:center; color:var(--muted); }
   .empty .big{ font-size:13px; font-family:var(--font-ui); letter-spacing:.04em; margin-bottom:.5em; }
 
@@ -126,17 +121,17 @@
   .art-row .thumb{ flex:0 0 auto; width:56px; height:56px; object-fit:cover; border-radius:2px; border:1px solid var(--border); background:var(--raised); }
   .art-row .thumb.large{ width:96px; height:96px; }
   .art-row .body{ flex:1; min-width:0; }
-  .art-row .title{ font-family:var(--font-read); font-size:var(--fs-art-list-title); font-weight:var(--fw-art-list-title); margin:0 0 .2em; }
-  .art-row .preview{ font-size:var(--fs-art-list-preview); font-weight:var(--fw-art-list-preview); color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
+  .art-row .title{ font-family:var(--font-family-list-title); font-size:var(--fs-art-list-title); font-weight:var(--fw-art-list-title); margin:0 0 .2em; }
+  .art-row .preview{ font-family:var(--font-family-list-preview); font-size:var(--fs-art-list-preview); font-weight:var(--fw-art-list-preview); color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; }
   .art-row .meta{ font-size:calc(var(--fs-base) * 0.69); color:var(--muted); margin-top:.3em; }
   .art-row .star-dot{ color:var(--accent); margin-right:.3em; }
 
   /* article view */
   .art-head{ padding:1em 1.1em .6em; border-bottom:1px solid var(--border); }
-  .art-head h2{ font-family:var(--font-read); font-size:var(--fs-art-title); font-weight:var(--fw-art-title); line-height:1.25; margin:0 0 .3em; cursor:pointer; }
+  .art-head h2{ font-family:var(--font-family-title); font-size:var(--fs-art-title); font-weight:var(--fw-art-title); line-height:1.25; margin:0 0 .3em; cursor:pointer; }
   .art-head .meta{ font-size:calc(var(--fs-base) * 0.75); color:var(--muted); }
   .art-enclosure{ max-width:100%; width:auto; height:auto; max-height:60vh; object-fit:contain; display:block; margin:0 auto; cursor:pointer; }
-  .art-content{ font-family:var(--font-read); font-size:var(--fs-art-body); font-weight:var(--fw-art-body); line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
+  .art-content{ font-family:var(--font-family-body); font-size:var(--fs-art-body); font-weight:var(--fw-art-body); line-height:1.65; padding:1.1em 1.1em 3em; max-width:680px; margin:0 auto; }
   .art-content *{ float:none !important; }
   .art-content img{ display:block !important; float:none !important; max-width:100% !important; width:auto !important; height:auto !important; margin:0 0 .8em; cursor:pointer; border-radius:2px; }
   .art-content a{ color:var(--accent); }
@@ -204,7 +199,7 @@
     <button id="btn-back" class="icon hidden" aria-label="Back">&#128072;</button>
     <h1 id="top-title">NRP</h1>
     <span id="top-actions" class="row" style="gap:.4em;"></span>
-    <button id="btn-top-save" class="icon" aria-label="Save Config">&#128190;</button>
+    <button id="btn-top-save" class="icon hidden" aria-label="Save Config">&#128190;</button>
     <button id="btn-config" class="icon" aria-label="Settings">&#128736;</button>
   </div>
 
@@ -362,56 +357,106 @@
         <legend>Typography</legend>
         <label>Feed List</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
-          <select id="cfg-ff-feed" class="grow" style="flex: 1;">
-             <option value="serif">Serif</option>
-             <option value="sans-serif">Sans</option>
-             <option value="monospace">Mono</option>
+          <select id="cfg-ff-feed" class="grow" style="flex: 7;">
+    <optgroup label="System & Generics">
+        <option value="system">System Default</option>
+        <option value="serif">Standard Serif</option>
+        <option value="sans-serif">Standard Sans</option>
+        <option value="monospace">Standard Mono</option>
+    </optgroup>
+    <optgroup label="Specific Styles">
+        <option value="georgia">Georgia (Elegant Serif)</option>
+        <option value="times">Times New Roman (Classic Serif)</option>
+        <option value="arial">Arial (Clean Sans)</option>
+        <option value="verdana">Verdana (Wide Sans)</option>
+        <option value="consolas">Consolas (Modern Code)</option>
+    </optgroup>
           </select>
-          <input id="cfg-fs-feed" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <input id="cfg-fs-feed" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
           <label style="margin:0"><input id="cfg-fw-feed" type="checkbox"> Bold</label>
         </div>
 
         <label>Article List Preview Header</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
-          <select id="cfg-ff-art-list-title" class="grow" style="flex: 1;">
-             <option value="serif">Serif</option>
-             <option value="sans-serif">Sans</option>
-             <option value="monospace">Mono</option>
+          <select id="cfg-ff-art-list-title" class="grow" style="flex: 7;">
+    <optgroup label="System & Generics">
+        <option value="system">System Default</option>
+        <option value="serif">Standard Serif</option>
+        <option value="sans-serif">Standard Sans</option>
+        <option value="monospace">Standard Mono</option>
+    </optgroup>
+    <optgroup label="Specific Styles">
+        <option value="georgia">Georgia (Elegant Serif)</option>
+        <option value="times">Times New Roman (Classic Serif)</option>
+        <option value="arial">Arial (Clean Sans)</option>
+        <option value="verdana">Verdana (Wide Sans)</option>
+        <option value="consolas">Consolas (Modern Code)</option>
+    </optgroup>
           </select>
-          <input id="cfg-fs-art-list-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <input id="cfg-fs-art-list-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
           <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
         </div>
 
         <label>Article List Preview Text</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
-          <select id="cfg-ff-art-list-preview" class="grow" style="flex: 1;">
-             <option value="serif">Serif</option>
-             <option value="sans-serif">Sans</option>
-             <option value="monospace">Mono</option>
+          <select id="cfg-ff-art-list-preview" class="grow" style="flex: 7;">
+    <optgroup label="System & Generics">
+        <option value="system">System Default</option>
+        <option value="serif">Standard Serif</option>
+        <option value="sans-serif">Standard Sans</option>
+        <option value="monospace">Standard Mono</option>
+    </optgroup>
+    <optgroup label="Specific Styles">
+        <option value="georgia">Georgia (Elegant Serif)</option>
+        <option value="times">Times New Roman (Classic Serif)</option>
+        <option value="arial">Arial (Clean Sans)</option>
+        <option value="verdana">Verdana (Wide Sans)</option>
+        <option value="consolas">Consolas (Modern Code)</option>
+    </optgroup>
           </select>
-          <input id="cfg-fs-art-list-preview" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <input id="cfg-fs-art-list-preview" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
           <label style="margin:0"><input id="cfg-fw-art-list-preview" type="checkbox"> Bold</label>
         </div>
 
         <label>Article Header</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
-          <select id="cfg-ff-art-title" class="grow" style="flex: 1;">
-             <option value="serif">Serif</option>
-             <option value="sans-serif">Sans</option>
-             <option value="monospace">Mono</option>
+          <select id="cfg-ff-art-title" class="grow" style="flex: 7;">
+    <optgroup label="System & Generics">
+        <option value="system">System Default</option>
+        <option value="serif">Standard Serif</option>
+        <option value="sans-serif">Standard Sans</option>
+        <option value="monospace">Standard Mono</option>
+    </optgroup>
+    <optgroup label="Specific Styles">
+        <option value="georgia">Georgia (Elegant Serif)</option>
+        <option value="times">Times New Roman (Classic Serif)</option>
+        <option value="arial">Arial (Clean Sans)</option>
+        <option value="verdana">Verdana (Wide Sans)</option>
+        <option value="consolas">Consolas (Modern Code)</option>
+    </optgroup>
           </select>
-          <input id="cfg-fs-art-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <input id="cfg-fs-art-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
           <label style="margin:0"><input id="cfg-fw-art-title" type="checkbox"> Bold</label>
         </div>
 
         <label>Article Body</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.5em;">
-          <select id="cfg-ff-art-body" class="grow" style="flex: 1;">
-             <option value="serif">Serif</option>
-             <option value="sans-serif">Sans</option>
-             <option value="monospace">Mono</option>
+          <select id="cfg-ff-art-body" class="grow" style="flex: 7;">
+    <optgroup label="System & Generics">
+        <option value="system">System Default</option>
+        <option value="serif">Standard Serif</option>
+        <option value="sans-serif">Standard Sans</option>
+        <option value="monospace">Standard Mono</option>
+    </optgroup>
+    <optgroup label="Specific Styles">
+        <option value="georgia">Georgia (Elegant Serif)</option>
+        <option value="times">Times New Roman (Classic Serif)</option>
+        <option value="arial">Arial (Clean Sans)</option>
+        <option value="verdana">Verdana (Wide Sans)</option>
+        <option value="consolas">Consolas (Modern Code)</option>
+    </optgroup>
           </select>
-          <input id="cfg-fs-art-body" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 1;">
+          <input id="cfg-fs-art-body" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 3;">
           <label style="margin:0"><input id="cfg-fw-art-body" type="checkbox"> Bold</label>
         </div>  
       </fieldset>
@@ -535,7 +580,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.10"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.11"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -557,11 +602,11 @@ const DEFAULT_CFG = {
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   folderMode:"none", folders:[], hideEmptyFeeds:false,
   toolbarPlacement: "top",
-    ffFeed: "Georgia, serif",
-    ffArtListTitle: "Georgia, serif",
-    ffArtListPreview: "Georgia, serif",
-    ffArtTitle: "Georgia, serif",
-    ffArtBody: "Georgia, serif",
+  ffFeed: "georgia",
+  ffArtListTitle: "georgia",
+  ffArtListPreview: "georgia",
+  ffArtTitle: "georgia",
+  ffArtBody: "georgia",
   selectedFeeds:[] // [{id: accountId___feedId, accountId, title, folderName}]
 };
 
@@ -615,10 +660,19 @@ function getActiveColors() {
   };
 }
 
-  const FONT_MAP = {
-  "serif": "Georgia, serif",
-  "sans-serif": "system-ui, -apple-system, sans-serif",
-  "monospace": "ui-monospace, monospace"
+const FONT_MAP = {
+  // Generics & Modern System Fonts
+  "system": "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
+  "serif": "serif",
+  "sans-serif": "sans-serif",
+  "monospace": "monospace",
+
+  // Specific Web-Safe Font Stacks
+  "georgia": "Georgia, Cambria, 'Times New Roman', Times, serif",
+  "times": "'Times New Roman', Times, serif",
+  "arial": "Arial, Helvetica, sans-serif",
+  "verdana": "Verdana, Geneva, sans-serif",
+  "consolas": "Consolas, 'Liberation Mono', Menlo, Courier, monospace"
 };
   
 function applyTheme(){
@@ -640,12 +694,12 @@ function applyTheme(){
   document.documentElement.style.setProperty("--fs-art-body", (CFG.fsArtBody || 16) + "px");
   document.documentElement.style.setProperty("--fw-art-body", CFG.fwArtBody ? "700" : "400");
 
-  // Apply Font Families
-  document.documentElement.style.setProperty("--font-family-feed", FONT_MAP[CFG.ffFeed]);
-  document.documentElement.style.setProperty("--font-family-list-title", FONT_MAP[CFG.ffArtListTitle]);
-  document.documentElement.style.setProperty("--font-family-list-preview", FONT_MAP[CFG.ffArtListPreview]);
-  document.documentElement.style.setProperty("--font-family-title", FONT_MAP[CFG.ffArtTitle]);
-  document.documentElement.style.setProperty("--font-family-body", FONT_MAP[CFG.ffArtBody]);
+  // Apply Font Families (with fallbacks added)
+  document.documentElement.style.setProperty("--font-family-feed", FONT_MAP[CFG.ffFeed] || FONT_MAP["georgia"]);
+  document.documentElement.style.setProperty("--font-family-list-title", FONT_MAP[CFG.ffArtListTitle] || FONT_MAP["georgia"]);
+  document.documentElement.style.setProperty("--font-family-list-preview", FONT_MAP[CFG.ffArtListPreview] || FONT_MAP["georgia"]);
+  document.documentElement.style.setProperty("--font-family-title", FONT_MAP[CFG.ffArtTitle] || FONT_MAP["georgia"]);
+  document.documentElement.style.setProperty("--font-family-body", FONT_MAP[CFG.ffArtBody] || FONT_MAP["georgia"]);
   
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute("content", colors.bg);
@@ -1422,7 +1476,13 @@ function populateConfigForm(){
   $("#cfg-fw-art-title").checked = CFG.fwArtTitle;
   $("#cfg-fs-art-body").value = CFG.fsArtBody || 16;
   $("#cfg-fw-art-body").checked = CFG.fwArtBody;
-
+  
+  $("#cfg-ff-feed").value = CFG.ffFeed || "georgia";
+  $("#cfg-ff-art-list-title").value = CFG.ffArtListTitle || "georgia";
+  $("#cfg-ff-art-list-preview").value = CFG.ffArtListPreview || "georgia";
+  $("#cfg-ff-art-title").value = CFG.ffArtTitle || "georgia";
+  $("#cfg-ff-art-body").value = CFG.ffArtBody || "georgia";
+  
   $("#cfg-folder-mode").value = CFG.folderMode;
   $("#cfg-toolbar-placement").value = CFG.toolbarPlacement || "top";
   $("#cfg-hide-empty-feeds").checked = !!CFG.hideEmptyFeeds;
@@ -1721,7 +1781,6 @@ function renderOversizedLog(){
     const sizeMb = (item.size/1048576).toFixed(2);
     const seen = new Date(item.lastSeen).toLocaleString();
     
-    // Removed white-space:nowrap and overflow-x:auto from the text container
     row.innerHTML = `<div style="min-width:0;">
       <div style="font-size:12px;">${escapeHtml(item.url)}</div>
       <div class="muted" style="font-size:10px; margin-top:.15em;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
@@ -2183,15 +2242,31 @@ async function sendToWallabag(){
 async function init(){
   await openDb();
   applyTheme(); setupManifest(); populateConfigForm();
-  
+
+  if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+
   if(!CFG.accounts || CFG.accounts.length === 0){
     navigate("screen-config", {title:"Settings"});
-  }else if(CFG.startupMode && CFG.startupMode !== "feedlist"){
-    const f = CFG.selectedFeeds.find(x=>x.id===CFG.startupMode);
-    if(f) openArticleList(f.id, f.title); else goToFeedList();
-  }else{
-    goToFeedList();
+    return;
   }
+
+  processOutbox();
+
+  if(CFG.startupMode && CFG.startupMode !== "feedlist"){
+    const f = CFG.selectedFeeds.find(x=>x.id===CFG.startupMode);
+    if(f){
+      // Set up the feed list first so it's on the nav stack - otherwise Back has nowhere to go.
+      navStack = []; lastOpts = {title:"Feeds"};
+      showScreen("screen-feeds", {title:"Feeds"});
+      await renderFeedList();
+      openArticleList(f.id, f.title);
+    }else{
+      await goToFeedList();
+    }
+  }else{
+    await goToFeedList();
+  }
+  refreshCounters();
 }
 init();
 
