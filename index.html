@@ -192,6 +192,20 @@
     padding:.3em .35em; font-size:16px;
     height:44px; /* Added to match the toolbar buttons */
   }
+
+  /* Targets all fieldset elements on the page */
+fieldset {
+  border: 2px solid #222222; /* Changes the border to a solid, dark color */
+  border-radius: 6px;        /* Optional: Rounds the corners slightly */
+  padding: 15px;             /* Optional: Adds breathing room inside the box */
+  margin-bottom: 20px;       /* Optional: Adds space below the fieldset */
+}
+
+/* Optional: Style the legend so it matches nicely with the dark border */
+fieldset legend {
+  font-weight: bold;
+  padding: 0 5px; /* Gives the text a little space from the line */
+}
 </style>
 </head>
 <body>
@@ -448,9 +462,6 @@
           <option value="light">Always Light</option>
           <option value="dark">Always Dark</option>
         </select>
-        <div class="row" style="margin-bottom:.6em;">
-          <button id="preset-defaults" class="grow chip">Reset to defaults</button>
-        </div>
         <div class="row wrap" style="margin-bottom:.8em;">
           <div class="grow" style="min-width: 45%;">
             <label for="cfg-light-bg">Light Bg</label>
@@ -468,6 +479,9 @@
             <label for="cfg-dark-fg">Dark Fg</label>
             <input id="cfg-dark-fg" type="color">
           </div>
+        </div>
+        <div class="row" style="margin-top:.6em;">
+          <button id="preset-defaults" class="grow chip">Reset to defaults</button>
         </div>
       </fieldset>
       <fieldset>
