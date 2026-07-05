@@ -2037,7 +2037,7 @@ async function renderFeedList(){
 $("#feed-sort-field").addEventListener("change", e=>{ feedSort.field=e.target.value; renderFeedList(); });
 $("#feed-sort-dir").addEventListener("click", ()=>{
   feedSort.dir = feedSort.dir==="asc" ? "desc" : "asc";
-  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u2193" : "\u2191";
+  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
   renderFeedList();
 });
 
