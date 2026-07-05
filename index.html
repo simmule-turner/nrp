@@ -371,8 +371,8 @@
     </optgroup>
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
-          <input id="cfg-fs-feed" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-feed-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
+          <input id="cfg-fs-feed" type="range" min="10" max="40" style="width: 100px;">
+          <span id="cfg-fs-feed-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-feed" type="checkbox"> Bold</label>
         </div>
@@ -395,8 +395,8 @@
     </optgroup>
           </select>
 <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
-          <input id="cfg-fs-art-list-title" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
+          <input id="cfg-fs-art-list-title" type="range" min="10" max="40" style="width: 80px;">
+          <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
         </div>
           
           <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
@@ -420,8 +420,8 @@
     </optgroup>
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
-          <input id="cfg-fs-art-list-preview" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-list-preview-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
+          <input id="cfg-fs-art-list-preview" type="range" min="10" max="40" style="width: 60px;">
+          <span id="cfg-fs-art-list-preview-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-art-list-preview" type="checkbox"> Bold</label>
         </div>
@@ -444,8 +444,8 @@
     </optgroup>
           </select>
           <div style="flex: 3; display: flex; align-items: center; gap: 0.4em;">
-          <input id="cfg-fs-art-title" type="range" min="10" max="40" class="grow">
-          <span id="cfg-fs-art-title-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
+          <input id="cfg-fs-art-title" type="range" min="10" max="40" style="width: 40px;">
+          <span id="cfg-fs-art-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
         </div>
           <label style="margin:0"><input id="cfg-fw-art-title" type="checkbox"> Bold</label>
         </div>
@@ -594,7 +594,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.12"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.10"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
