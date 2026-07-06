@@ -221,14 +221,14 @@ fieldset legend {
         <option value="name">Name</option>
         <option value="count">Unread</option>
       </select>
-      <button id="feed-sort-dir" class="icon" aria-label="Toggle sort direction">&#x1F447;</button>
+      <button id="feed-sort-dir" class="icon" aria-label="Toggle sort direction">&#8595;</button>
     </span>
     <span id="art-sort-controls" class="row hidden" style="gap:.3em;">
       <select id="art-sort-field" aria-label="Sort articles by">
         <option value="date">Date</option>
         <option value="size">Size</option>
       </select>
-      <button id="art-sort-dir" class="icon" aria-label="Toggle sort direction">&#x1F447;</button>
+      <button id="art-sort-dir" class="icon" aria-label="Toggle sort direction">&#8595;</button>
     </span>
     <button id="btn-top-save" class="icon hidden" aria-label="Save Config">&#128190;</button>
     <button id="btn-config" class="icon" aria-label="Settings">&#128736;</button>
@@ -254,7 +254,7 @@ fieldset legend {
           <input id="acc-name" type="text" placeholder="e.g. My RSS Server">
           <label for="acc-url">Server URL</label>
           <input id="acc-url" type="url" placeholder="https://...">
-          
+
           <div id="acc-mf-fields">
             <label for="acc-token">API Token</label>
             <input id="acc-token" type="password">
@@ -268,7 +268,16 @@ fieldset legend {
 
           <label for="acc-max">Max items per feed / sync</label>
           <input id="acc-max" type="number" min="1" step="1" value="50">
-          
+
+          <div class="row between" style="margin-top:1em;">
+            <label style="margin:0;">Use CORS proxy for thumbnails</label>
+            <input id="acc-thumb-proxy-enabled" type="checkbox">
+          </div>
+          <label for="acc-thumb-proxy-url">Proxy URL (prepended to image URL)</label>
+          <input id="acc-thumb-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
+          <label for="acc-thumb-proxy-token">Proxy auth token (sent as X-Proxy-Token header)</label>
+          <input id="acc-thumb-proxy-token" type="password" placeholder="your-extremely-secure-random-token-here">
+
           <div class="row wrap" style="margin-top:1em;">
             <button id="btn-save-account" class="primary grow">Save Account</button>
             <button id="btn-cancel-account" class="grow">Cancel</button>
@@ -331,7 +340,8 @@ fieldset legend {
           <label style="margin:0;">Never fetch images</label>
           <input id="cfg-never-fetch-images" type="checkbox">
         </div>
-        <label for="cfg-density">Article list display</label>        <select id="cfg-density">
+        <label for="cfg-density">Article list display</label>
+        <select id="cfg-density">
           <option value="text">Text only</option>
           <option value="small">Text &amp; small image</option>
           <option value="large">Text &amp; large image</option>
@@ -384,7 +394,7 @@ fieldset legend {
           <input id="cfg-fs-art-list-title" type="range" min="10" max="40" style="width: 80px;">
           <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
         </div>
-          
+
           <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
         </div>
 
@@ -510,15 +520,15 @@ fieldset legend {
           <button id="btn-clear-cache">Clear all cached data</button>
         </div>
         <p class="muted" style="font-size:11px; margin:.6em 0 0;">
-          Clearing removes all cached articles, images, and pending sync actions,
+          Clearing removes all cached articles, images, thumbnails, and pending sync actions,
           but keeps your selected feeds so the next sync starts fresh.
         </p>
       </fieldset>
 
       <fieldset>
-        <legend>Oversized Images</legend>
+        <legend>Logging</legend>
         <p class="muted" style="font-size:11px; margin:0 0 .6em;">
-          Images larger than your max cached item size can't be stored in full, so they're re-fetched from the network each time they're shown. Thumbnails for these are still cached where possible. Listed here for visibility.
+          A lightweight diagnostic log for troubleshooting: images too large to cache in full (re-fetched from the network each time they're shown, though thumbnails for these are still cached where possible), plus thumbnail-generation tracing and other app events.
         </p>
         <div id="oversized-list" class="chk-list" style="max-height:200px;"></div>
         <div class="row" style="margin-top:.6em;">
@@ -591,14 +601,14 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.21"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.22"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
-  accounts: [], 
+  accounts: [],
   wallabagUrl:"", wallabagClientId:"", wallabagClientSecret:"",
   wallabagUsername:"", wallabagPassword:"",
   wallabagAccessToken:null, wallabagRefreshToken:null, wallabagTokenExpiry:0,
- imageCacheMode:"on-read",
+  imageCacheMode:"on-read",
   themeMode:"system",
   lightBg:"#F5F6F3", lightFg:"#1B1D1F",
   darkBg:"#15171A", darkFg:"#E7E4DA",
@@ -627,7 +637,7 @@ function loadConfig(){
     const raw = localStorage.getItem(CFG_KEY);
     if(!raw) return Object.assign({}, DEFAULT_CFG);
     let parsed = JSON.parse(raw);
-    
+
     // Migration for older clients relying on single bg/fg
     if(parsed.bgColor && !parsed.lightBg) {
       parsed.lightBg = parsed.bgColor;
@@ -654,7 +664,7 @@ function loadConfig(){
       }
       delete parsed.minifluxUrl; delete parsed.minifluxToken; delete parsed.minifluxMaxItems;
     }
-    
+
     return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
 }
@@ -686,14 +696,14 @@ const FONT_MAP = {
   "verdana": "Verdana, Geneva, sans-serif",
   "consolas": "Consolas, 'Liberation Mono', Menlo, Courier, monospace"
 };
-  
+
 function applyTheme(){
   const colors = getActiveColors();
   document.documentElement.style.setProperty("--bg", colors.bg);
   document.documentElement.style.setProperty("--fg", colors.fg);
   document.documentElement.style.setProperty("--accent", CFG.accentColor || "#B8752E");
   document.documentElement.style.setProperty("--fs-base", "16px");
-  
+
   // Custom Typography overrides
   document.documentElement.style.setProperty("--fs-feed", (CFG.fsFeed || 14) + "px");
   document.documentElement.style.setProperty("--fw-feed", CFG.fwFeed ? "700" : "400");
@@ -712,7 +722,7 @@ function applyTheme(){
   document.documentElement.style.setProperty("--font-family-list-preview", FONT_MAP[CFG.ffArtListPreview] || FONT_MAP["georgia"]);
   document.documentElement.style.setProperty("--font-family-title", FONT_MAP[CFG.ffArtTitle] || FONT_MAP["georgia"]);
   document.documentElement.style.setProperty("--font-family-body", FONT_MAP[CFG.ffArtBody] || FONT_MAP["georgia"]);
-  
+
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute("content", colors.bg);
   document.body.classList.toggle("toolbar-bottom", CFG.toolbarPlacement === "bottom");
@@ -752,7 +762,7 @@ function setupManifest(){
 }
 
 /* ============================= INDEXEDDB ============================= */
-const DB_NAME = "nrp-db", DB_VERSION = 1;
+const DB_NAME = "nrp-db", DB_VERSION = 2;
 let dbp = null;
 function openDb(){
   if(dbp) return dbp;
@@ -773,6 +783,9 @@ function openDb(){
       }
       if(!db.objectStoreNames.contains("feedsCache")){
         db.createObjectStore("feedsCache", {keyPath:"id"});
+      }
+      if(!db.objectStoreNames.contains("thumbnails")){
+        db.createObjectStore("thumbnails", {keyPath:"id"});
       }
     };
     req.onsuccess = ()=>resolve(req.result);
@@ -810,10 +823,9 @@ async function putEntries(list){ return tx("entries", "readwrite", store=>{ list
 async function getEntry(id){ return tx("entries","readonly", store=>reqp(store.get(id))); }
 // Updates a single field (or set of fields) on the freshest persisted copy of an
 // entry, inside one readwrite transaction. This avoids the classic read-modify-write
-// race where two independent in-memory copies of the same entry (e.g. the article
-// list's copy generating a thumbnail, and the article view's copy marking it read)
-// each do a full overwrite — whichever write lands second silently erases whatever
-// field the other one had just added.
+// race where two independent in-memory copies of the same entry each do a full
+// overwrite — whichever write lands second silently erases whatever field the
+// other one had just added.
 async function patchEntry(id, patchFn){
   return tx("entries", "readwrite", store=>{
     return new Promise((resolve, reject)=>{
@@ -831,21 +843,58 @@ async function patchEntry(id, patchFn){
 }
 async function getEntriesByFeed(feedId){ return idbGetAll("entries","by_feed", feedId); }
 async function deleteEntries(ids){
+  await Promise.all(ids.map(id=>removeThumbFromDb(id)));
   return tx("entries","readwrite", store=>{ ids.forEach(id=>store.delete(id)); });
 }
-/* ---- oversized image log (diagnostic; images too large to fit in the per-item cache cap) ---- */
-const OVERSIZED_LOG_KEY = "nrp_oversized_images";
-function loadOversizedLog(){
-  try{ return JSON.parse(localStorage.getItem(OVERSIZED_LOG_KEY) || "[]"); }catch(e){ return []; }
+
+/* ---- app log (generalized lightweight diagnostic log, surfaced in Settings) ---- */
+const LOG_KEY = "nrp_app_log";
+function loadLog(){
+  try{ return JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); }catch(e){ return []; }
 }
-function saveOversizedLog(list){ localStorage.setItem(OVERSIZED_LOG_KEY, JSON.stringify(list)); }
-function recordOversizedImage(url, size){
-  let list = loadOversizedLog();
-  const existing = list.find(i=>i.url===url);
-  if(existing){ existing.size = size; existing.lastSeen = Date.now(); }
-  else list.push({url, size, lastSeen: Date.now()});
-  if(list.length > 200) list = list.slice(-200); // cap unbounded growth
-  saveOversizedLog(list);
+function saveLog(list){ localStorage.setItem(LOG_KEY, JSON.stringify(list)); }
+// Generic log utility. `type` groups related entries (e.g. "oversized", "thumb");
+// "oversized" entries are deduped/updated by message (matching prior behavior),
+// all other types simply append so a sequence of events stays visible.
+function appLog(type, message, size){
+  size = size || 0;
+  let list = loadLog();
+  if(type === "oversized"){
+    const existing = list.find(i=>i.type==="oversized" && i.message===message);
+    if(existing){ existing.size = size; existing.lastSeen = Date.now(); }
+    else list.push({type, message, size, lastSeen: Date.now()});
+  }else{
+    list.push({type, message, size, lastSeen: Date.now()});
+  }
+  if(list.length > 300) list = list.slice(-300); // cap unbounded growth
+  saveLog(list);
+}
+function recordOversizedImage(url, size){ appLog("oversized", url, size); }
+function recordThumbDebug(msg){ appLog("thumb", msg); }
+
+// Thumbnails are stored in their own IndexedDB object store, keyed by entry id,
+// as small base64 JPEG data URLs. A dedicated store (rather than a field on the
+// `entries` record, or localStorage) means nothing else ever reads/writes it —
+// no shared-object write races with markRead/toggleStar/sync — and it isn't
+// subject to localStorage's (smaller, string-only) per-origin quota.
+async function getThumbFromDb(id){
+  const rec = await tx("thumbnails","readonly", store=>reqp(store.get(id)));
+  return rec ? rec.dataUrl : null;
+}
+async function setThumbInDb(id, dataUrl){
+  await tx("thumbnails","readwrite", store=>store.put({id, dataUrl}));
+  return true;
+}
+async function removeThumbFromDb(id){
+  await tx("thumbnails","readwrite", store=>store.delete(id));
+}
+function blobToDataUrl(blob){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 /* ---- assets (image cache) ---- */
@@ -906,6 +955,7 @@ async function clearAllCachedData(){
   await tx("assets","readwrite", store=>store.clear());
   await tx("outbox","readwrite", store=>store.clear());
   await tx("feedsCache","readwrite", store=>store.clear());
+  await tx("thumbnails","readwrite", store=>store.clear());
   for(const url of [...objectUrlCache.keys()]) revokeObjectUrlFor(url);
   objectUrlCache.clear();
 }
@@ -913,22 +963,13 @@ function updateCacheUsageDisplay(){
   cacheStats().then(s=>{ $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`; });
 }
 
-function blobToDataUrl(blob){
-  return new Promise((resolve, reject)=>{
-    const reader = new FileReader();
-    reader.onload = ()=>resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-  
 async function generateThumbnailBlob(srcObjUrl, maxSize) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       let w = img.width, h = img.height;
       if (w <= maxSize && h <= maxSize) { resolve(null); return; }
-      const scale = maxSize / Math.max(w, h); 
+      const scale = maxSize / Math.max(w, h);
       const canvas = document.createElement('canvas');
       canvas.width = w * scale; canvas.height = h * scale;
       const ctx = canvas.getContext('2d');
@@ -939,30 +980,57 @@ async function generateThumbnailBlob(srcObjUrl, maxSize) {
   });
 }
 
-// Thumbnails are stored directly on the entry record (entry.thumbBlob) so they
-// are tightly coupled to the article itself, not to a derived/unstable URL key.
-// This makes them immune to upstream image-URL rewrites (proxies, signed URLs,
-// cache-busting params) between syncs, and removes them from LRU eviction
-// entirely since they're never stored in the `assets` cache.
+// Thumbnails are generated once per article and persisted in the dedicated
+// `thumbnails` IndexedDB store, keyed by the entry's own stable id. This keeps
+// them immune to upstream image-URL rewrites between syncs and out of any
+// write race with the `entries` store. An optional per-account CORS proxy
+// (with an optional X-Proxy-Token auth header) is used only for the network
+// fetch of the source image below — nowhere else in the app.
 async function ensureThumbnail(entry){
   if(CFG.neverFetchImages) return null;
-  if(entry.thumbDataUrl) return entry.thumbDataUrl;
+
+  const cached = await getThumbFromDb(entry.id);
+  if(cached){
+    recordThumbDebug(`cache HIT id=${entry.id}`);
+    return cached;
+  }
+
   const imgUrl = entry.enclosureUrl || firstImageUrl(entry.content);
-  if(!imgUrl) return null;
+  if(!imgUrl){
+    recordThumbDebug(`no image url id=${entry.id}`);
+    return null;
+  }
+  recordThumbDebug(`cache MISS id=${entry.id}, generating from ${imgUrl}`);
 
   let sourceBlob = null;
   const fullRec = await getCachedAsset(imgUrl);
   if(fullRec && fullRec.blob){
     touchAsset(imgUrl);
     sourceBlob = fullRec.blob;
+    recordThumbDebug(`id=${entry.id} source = asset cache (${fullRec.size} bytes)`);
   }else{
+    const account = CFG.accounts.find(a => a.id === entry.accountId);
+    const useProxy = !!(account && account.thumbProxyEnabled && account.thumbProxyUrl);
+    const fetchUrl = useProxy ? (account.thumbProxyUrl + imgUrl) : imgUrl;
+    const fetchOpts = {referrerPolicy:"no-referrer"};
+    if(useProxy && account.thumbProxyToken){
+      fetchOpts.headers = {"X-Proxy-Token": account.thumbProxyToken};
+    }
     try{
-      const resp = await fetch(imgUrl, {referrerPolicy:"no-referrer"});
-      if(resp.ok) sourceBlob = await resp.blob();
-    }catch(e){ }
+      const resp = await fetch(fetchUrl, fetchOpts);
+      if(resp.ok){
+        sourceBlob = await resp.blob();
+        recordThumbDebug(`id=${entry.id} source = network fetch${useProxy ? " (via proxy)" : ""} (${sourceBlob.size} bytes)`);
+      }else{
+        recordThumbDebug(`id=${entry.id} fetch failed, status=${resp.status}${useProxy ? " (via proxy)" : ""}`);
+      }
+    }catch(e){
+      recordThumbDebug(`id=${entry.id} fetch threw: ${e && e.name}${useProxy ? " (via proxy)" : ""}`);
+    }
   }
   if(!sourceBlob){
     cacheOpaqueInBackground(imgUrl);
+    recordThumbDebug(`id=${entry.id} no source available this attempt`);
     return null;
   }
 
@@ -970,23 +1038,20 @@ async function ensureThumbnail(entry){
   try{
     let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
     if(!thumbBlob) thumbBlob = sourceBlob;
-    const thumbDataUrl = await blobToDataUrl(thumbBlob);
-    entry.thumbDataUrl = thumbDataUrl;
-    await patchEntry(entry.id, rec=>{ rec.thumbDataUrl = thumbDataUrl; });
+    const dataUrl = await blobToDataUrl(thumbBlob);
+    await setThumbInDb(entry.id, dataUrl);
+    recordThumbDebug(`id=${entry.id} thumbnail stored (len=${dataUrl.length})`);
 
     if(!fullRec){
       storeAsset(imgUrl, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(imgUrl, err.size); });
     }
-    return thumbDataUrl;
+    return dataUrl;
   }catch(e){
+    recordThumbDebug(`id=${entry.id} generation threw: ${e && e.message}`);
     return null;
   }finally{
     URL.revokeObjectURL(sourceObjUrl);
   }
-}
-
-function thumbSrcFor(entry){
-  return entry.thumbDataUrl || null;
 }
 
 async function resolveImageSrc(url){
@@ -1014,8 +1079,8 @@ async function resolveImageSrc(url){
   return url;
 }
 
-const opaqueAttempted = new Map(); 
-const OPAQUE_RETRY_MS = 10 * 60 * 1000; 
+const opaqueAttempted = new Map();
+const OPAQUE_RETRY_MS = 10 * 60 * 1000;
 
 function cacheOpaqueInBackground(url){
   const last = opaqueAttempted.get(url);
@@ -1053,7 +1118,7 @@ async function prefetchImagesForEntry(entry){
           continue;
         }
       }catch(e){ }
-     cacheOpaqueInBackground(url);
+      cacheOpaqueInBackground(url);
     }
   } finally {
     endBgTask();
@@ -1076,8 +1141,8 @@ async function setProtection(entry, protectedFlag){
       req.onsuccess = ()=>{
         const rec = req.result;
         if(!rec) return;
-        if(protectedFlag){ 
-          rec.protectedFlag = true; store.put(rec); 
+        if(protectedFlag){
+          rec.protectedFlag = true; store.put(rec);
         } else {
           let stillNeeded = false;
           for(const e of starred){
@@ -1089,8 +1154,8 @@ async function setProtection(entry, protectedFlag){
                 break;
              }
           }
-          if(!stillNeeded){ 
-             rec.protectedFlag = false; store.put(rec); 
+          if(!stillNeeded){
+             rec.protectedFlag = false; store.put(rec);
           }
         }
       };
@@ -1123,7 +1188,7 @@ async function processOutbox(){
   for(const item of items){
     try{
       const account = CFG.accounts.find(a => a.id === item.accountId);
-      
+
       if(item.type === "mark-status" && account){
         await apiMarkStatus(account, item.rawIds, item.status, item.rawFeedId);
       }else if(item.type === "toggle-star" && account){
@@ -1182,7 +1247,7 @@ async function mfGetFeeds(account){
     id: String(f.id), title: f.title, categoryTitle: (f.category && f.category.title) || "Uncategorized"
   }));
 }
-async function mfGetCounters(account){ 
+async function mfGetCounters(account){
   const c = await mfFetch(account, "/v1/feeds/counters");
   return c.unreads || {};
 }
@@ -1219,7 +1284,7 @@ const NB_STATE = {
 
 async function loginToNewsBlur(account) {
     if (NB_STATE.isLoggingIn) return NB_STATE.isLoggingIn;
-    
+
     NB_STATE.isLoggingIn = (async () => {
         if (account.username && account.password) {
             NB_STATE.isAuthenticated = true;
@@ -1230,7 +1295,7 @@ async function loginToNewsBlur(account) {
         NB_STATE.isLoggingIn = null;
         return NB_STATE.isAuthenticated;
     })();
-    
+
     return NB_STATE.isLoggingIn;
 }
 
@@ -1259,7 +1324,7 @@ async function nbFetch(account, path, opts = {}) {
     try {
         const res = await fetch(account.url + path, fetchOptions);
         if (res.status === 401 || res.status === 403) {
-            NB_STATE.isAuthenticated = false; 
+            NB_STATE.isAuthenticated = false;
             throw new Error("Authentication failed or session expired (Unauthorized/Forbidden)");
         }
         if (!res.ok) {
@@ -1276,7 +1341,7 @@ async function nbGetFeeds(account){
     const res = await nbFetch(account, "/reader/feeds");
     const out = [];
     const catMap = {};
-    
+
     const parseFolders = (list, catName) => {
         for(const item of list) {
             if(typeof item === 'number' || typeof item === 'string') catMap[item] = catName;
@@ -1285,9 +1350,9 @@ async function nbGetFeeds(account){
             }
         }
     };
-    
+
     if(res.folders) parseFolders(res.folders, "Uncategorized");
-    
+
     for (const id in res.feeds) {
         const f = res.feeds[id];
         if(!f.active) continue;
@@ -1451,7 +1516,7 @@ function navigate(id, opts){
   if(currentScreen) navStack.push({id:currentScreen, opts:lastOpts});
   lastOpts = opts; showScreen(id, opts);
 }
-function updateScreen(id, opts){ 
+function updateScreen(id, opts){
   lastOpts = opts; showScreen(id, opts);
 }
 let lastOpts = {};
@@ -1499,36 +1564,35 @@ function populateConfigForm(){
   $("#cfg-wb-username").value = CFG.wallabagUsername;
   $("#cfg-wb-password").value = CFG.wallabagPassword;
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
-  
+
   $("#cfg-theme-mode").value = CFG.themeMode;
   $("#cfg-light-bg").value = CFG.lightBg; $("#cfg-light-fg").value = CFG.lightFg;
   $("#cfg-dark-bg").value = CFG.darkBg; $("#cfg-dark-fg").value = CFG.darkFg;
-  
+
   $("#cfg-never-fetch-images").checked = !!CFG.neverFetchImages;
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
-  
+
   $("#cfg-fw-feed").checked = CFG.fwFeed;
   $("#cfg-fw-art-list-title").checked = CFG.fwArtListTitle;
   $("#cfg-fw-art-list-preview").checked = CFG.fwArtListPreview;
   $("#cfg-fw-art-title").checked = CFG.fwArtTitle;
   $("#cfg-fw-art-body").checked = CFG.fwArtBody;
 
-  
   setSliderVal("#cfg-fs-feed", CFG.fsFeed || 14);
   setSliderVal("#cfg-fs-art-list-title", CFG.fsArtListTitle || 15);
   setSliderVal("#cfg-fs-art-list-preview", CFG.fsArtListPreview || 12);
   setSliderVal("#cfg-fs-art-title", CFG.fsArtTitle || 22);
   setSliderVal("#cfg-fs-art-body", CFG.fsArtBody || 16);
-  
+
   $("#cfg-ff-feed").value = CFG.ffFeed || "georgia";
   $("#cfg-ff-art-list-title").value = CFG.ffArtListTitle || "georgia";
   $("#cfg-ff-art-list-preview").value = CFG.ffArtListPreview || "georgia";
   $("#cfg-ff-art-title").value = CFG.ffArtTitle || "georgia";
   $("#cfg-ff-art-body").value = CFG.ffArtBody || "georgia";
-  
+
   $("#cfg-folder-mode").value = CFG.folderMode;
   $("#cfg-toolbar-placement").value = CFG.toolbarPlacement || "top";
   $("#cfg-hide-empty-feeds").checked = !!CFG.hideEmptyFeeds;
@@ -1574,6 +1638,9 @@ $("#btn-add-account").addEventListener("click", () => {
   $("#acc-user").value = "";
   $("#acc-pass").value = "";
   $("#acc-max").value = "50";
+  $("#acc-thumb-proxy-enabled").checked = false;
+  $("#acc-thumb-proxy-url").value = "";
+  $("#acc-thumb-proxy-token").value = "";
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
@@ -1597,7 +1664,10 @@ $("#btn-save-account").addEventListener("click", () => {
     type: $("#acc-type").value,
     name: $("#acc-name").value.trim() || $("#acc-type").value,
     url: $("#acc-url").value.trim(),
-    maxItems: parseInt($("#acc-max").value, 10) || 50
+    maxItems: parseInt($("#acc-max").value, 10) || 50,
+    thumbProxyEnabled: $("#acc-thumb-proxy-enabled").checked,
+    thumbProxyUrl: $("#acc-thumb-proxy-url").value.trim(),
+    thumbProxyToken: $("#acc-thumb-proxy-token").value
   };
   if(acc.type === "miniflux") { acc.token = $("#acc-token").value.trim(); }
   if(acc.type === "newsblur") { acc.username = $("#acc-user").value.trim(); acc.password = $("#acc-pass").value; }
@@ -1605,7 +1675,7 @@ $("#btn-save-account").addEventListener("click", () => {
   const existingIdx = CFG.accounts.findIndex(a => a.id === id);
   if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
   else CFG.accounts.push(acc);
-  
+
   saveConfig(CFG);
   renderAccountsList();
   $("#btn-cancel-account").click();
@@ -1622,6 +1692,9 @@ window.editAccount = (id) => {
   $("#acc-token").value = acc.token || "";
   $("#acc-user").value = acc.username || "";
   $("#acc-pass").value = acc.password || "";
+  $("#acc-thumb-proxy-enabled").checked = !!acc.thumbProxyEnabled;
+  $("#acc-thumb-proxy-url").value = acc.thumbProxyUrl || "";
+  $("#acc-thumb-proxy-token").value = acc.thumbProxyToken || "";
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
@@ -1634,7 +1707,7 @@ window.deleteAccount = async (id) => {
   CFG.selectedFeeds = CFG.selectedFeeds.filter(f => f.accountId !== id);
   saveConfig(CFG);
   renderAccountsList();
-  
+
   $("#feed-picker").classList.add("hidden");
   feedPickerChoices = null;
 
@@ -1667,7 +1740,7 @@ function refreshStartupOptions(){
     $("#cfg-fs-" + key + "-val").textContent = el.value + "px";
   });
 });
-  
+
 $("#preset-defaults").addEventListener("click", ()=>{
   // Toolbar / startup / layout
   $("#cfg-toolbar-placement").value = DEFAULT_CFG.toolbarPlacement;
@@ -1704,7 +1777,6 @@ $("#preset-defaults").addEventListener("click", ()=>{
   toast("Appearance reset to defaults \u2014 click Save to apply");
 });
 
-
 $("#cfg-folder-mode").addEventListener("change", ()=>{
   $("#manual-folder-ui").classList.toggle("hidden", $("#cfg-folder-mode").value !== "manual");
   if(feedPickerChoices) renderFeedPicker();
@@ -1738,7 +1810,7 @@ function renderFolderChips(){
   });
 }
 
-let feedPickerChoices = null; 
+let feedPickerChoices = null;
 $("#btn-manage-feeds").addEventListener("click", async ()=>{
   if(CFG.accounts.length === 0){ toast("Please add an account first."); return; }
   toast("Loading feeds...");
@@ -1746,7 +1818,7 @@ $("#btn-manage-feeds").addEventListener("click", async ()=>{
   try {
     feedPickerChoices = new Map();
     const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
-    
+
     for (const acc of CFG.accounts) {
       const feeds = await apiGetFeeds(acc);
       feeds.forEach(f => {
@@ -1768,7 +1840,7 @@ $("#btn-manage-feeds").addEventListener("click", async ()=>{
       opt.value = acc.id; opt.textContent = acc.name;
       accSelect.appendChild(opt);
     });
-    
+
     renderFeedPicker();
     $("#feed-picker").classList.remove("hidden");
     toast("Feeds loaded");
@@ -1810,7 +1882,7 @@ function renderFeedPicker(){
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = f.checked;
     cb.addEventListener("change", ()=>{ f.checked = cb.checked; refreshStartupOptions(); });
-    const lab = document.createElement("div"); lab.className = "grow"; 
+    const lab = document.createElement("div"); lab.className = "grow";
     lab.innerHTML = `<div>${escapeHtml(f.title)}</div><div style="font-size:10px; color:var(--muted);">${escapeHtml(f.accountName)}</div>`;
     row.appendChild(cb); row.appendChild(lab);
 
@@ -1844,40 +1916,41 @@ $("#btn-clear-cache").addEventListener("click", async ()=>{
   updateCacheUsageDisplay();
 });
 
-/* Oversized image log UI */
+/* App log UI (shared by oversized-image tracking, thumbnail tracing, etc.) */
 function renderOversizedLog(){
-  const list = loadOversizedLog();
+  const list = loadLog();
   const container = $("#oversized-list");
   container.innerHTML = "";
   if(list.length === 0){
     container.innerHTML = '<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">None</div></div>';
     return;
   }
-  
-  list.slice().sort((a,b)=>b.size-a.size).forEach(item=>{
+
+  list.slice().sort((a,b)=>b.lastSeen-a.lastSeen).forEach(item=>{
     const row = document.createElement("div");
     row.className = "chk-row";
-    
-    const sizeMb = (item.size/1048576).toFixed(2);
+
     const seen = new Date(item.lastSeen).toLocaleString();
-    
+    const sizeLabel = item.size ? ` &middot; ${(item.size/1048576).toFixed(2)} MB` : "";
+    const label = item.type === "oversized" ? item.message : `[${item.type}] ${item.message}`;
+
     row.innerHTML = `<div style="min-width:0;">
-      <div style="font-size:12px;">${escapeHtml(item.url)}</div>
-      <div class="muted" style="font-size:10px; margin-top:.15em;">${sizeMb} MB &middot; last seen ${escapeHtml(seen)}</div>
+      <div style="font-size:12px;">${escapeHtml(label)}</div>
+      <div class="muted" style="font-size:10px; margin-top:.15em;">${escapeHtml(seen)}${sizeLabel}</div>
     </div>`;
     container.appendChild(row);
   });
 }
 $("#btn-clear-oversized").addEventListener("click", ()=>{
-  saveOversizedLog([]);
+  saveLog([]);
   renderOversizedLog();
-  toast("Oversized image log cleared");
+  toast("Log cleared");
 });
 
 /* Import / Export Options */
 $("#btn-export-cfg").addEventListener("click", ()=>{
   const exportCfg = Object.assign({}, CFG);
-  delete exportCfg.selectedFeeds; 
+  delete exportCfg.selectedFeeds;
   const data = JSON.stringify(exportCfg, null, 2);
   const blob = new Blob([data], {type:"application/json"});
   const url = URL.createObjectURL(blob);
@@ -1893,7 +1966,7 @@ $("#file-import-cfg").addEventListener("change", e=>{
   reader.onload = e => {
     try{
       const parsed = JSON.parse(e.target.result);
-      delete parsed.selectedFeeds; 
+      delete parsed.selectedFeeds;
       Object.assign(CFG, parsed);
       saveConfig(CFG);
       toast("Config imported. Reloading...");
@@ -1910,11 +1983,11 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.wallabagUsername = $("#cfg-wb-username").value.trim();
   CFG.wallabagPassword = $("#cfg-wb-password").value;
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
-  
+
   CFG.themeMode = $("#cfg-theme-mode").value;
   CFG.lightBg = $("#cfg-light-bg").value; CFG.lightFg = $("#cfg-light-fg").value;
   CFG.darkBg = $("#cfg-dark-bg").value; CFG.darkFg = $("#cfg-dark-fg").value;
-    
+
   // Save Typography
   CFG.fsFeed = parseInt($("#cfg-fs-feed").value, 10) || 14;
   CFG.fwFeed = $("#cfg-fw-feed").checked;
@@ -1929,7 +2002,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
 
   CFG.ffFeed = $("#cfg-ff-feed").value;
   CFG.ffArtListTitle = $("#cfg-ff-art-list-title").value;
-  CFG.ffArtListPreview = $("#cfg-ff-art-list-preview").value; 
+  CFG.ffArtListPreview = $("#cfg-ff-art-list-preview").value;
   CFG.ffArtTitle = $("#cfg-ff-art-title").value;
   CFG.ffArtBody = $("#cfg-ff-art-body").value;
 
@@ -1987,7 +2060,6 @@ async function syncFeed(feedObj){
       if(existing){
         e.status = existing.status;
         e.starred = existing.starred;
-        if(existing.thumbDataUrl) e.thumbDataUrl = existing.thumbDataUrl;
       }
     }
     await putEntries(entries);
@@ -2132,7 +2204,7 @@ $("#feed-sort-field").addEventListener("change", e=>{
 });
 $("#feed-sort-dir").addEventListener("click", ()=>{
   feedSort.dir = feedSort.dir==="asc" ? "desc" : "asc";
-  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u2193" : "\u2191";
   saveSortState(FEED_SORT_KEY, feedSort);
   renderFeedList();
 });
@@ -2184,7 +2256,7 @@ function openArticleListForFolder(folderName){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
   renderArticleList();
 }
- 
+
 document.querySelectorAll(".tab").forEach(t=>{
   t.addEventListener("click", ()=>{
     articleFilter = t.dataset.filter;
@@ -2200,11 +2272,11 @@ $("#art-sort-field").addEventListener("change", e=>{
 });
 $("#art-sort-dir").addEventListener("click", ()=>{
   artSort.dir = artSort.dir==="asc" ? "desc" : "asc";
-  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u2193" : "\u2191";
   saveSortState(ART_SORT_KEY, artSort);
   renderArticleList();
 });
-  
+
 async function renderArticleList(){
   let entries;
   if(currentFolderName){
@@ -2254,23 +2326,20 @@ async function renderArticleList(){
     container.appendChild(row);
     const img = row.querySelector("img.thumb");
     if(img){
-      const existing = thumbSrcFor(e);
-      if(existing){
-        img.src = existing;
-      }else{
-        ensureThumbnail(e).then(src=>{
-          if(src){
-            img.src = src;
-          }else{
-            // Could not fetch/generate a real thumbnail this time (network hiccup,
-            // CORS, offline, etc). Fall back to the original image URL directly —
-            // same fallback resolveImageSrc already uses for full article images —
-            // so the row still shows something instead of staying permanently blank.
-            const fallback = e.enclosureUrl || firstImageUrl(e.content);
-            if(fallback) img.src = fallback;
-          }
-        });
-      }
+      getThumbFromDb(e.id).then(existing=>{
+        if(existing){
+          img.src = existing;
+        }else{
+          ensureThumbnail(e).then(src=>{
+            if(src){
+              img.src = src;
+            }else{
+              const fallback = e.enclosureUrl || firstImageUrl(e.content);
+              if(fallback) img.src = fallback;
+            }
+          });
+        }
+      });
     }
   }
 }
@@ -2309,7 +2378,7 @@ async function openArticle(entryId, opts){
   wbBtn.addEventListener("click", ()=>sendToWallabag());
 
   const nextBtn = document.createElement("button");
-  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}"; 
+  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}";
   nextBtn.addEventListener("click", ()=>nextArticle());
 
   const screenOpts = {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
@@ -2356,24 +2425,24 @@ function nextArticle(){
   if(!currentEntry || lastArticleOrder.length===0) return;
   const idx = lastArticleOrder.indexOf(currentEntry.id);
   if(idx === -1 || idx === lastArticleOrder.length-1){ toast("No more articles in this list"); return; }
-  openArticle(lastArticleOrder[idx+1], {replace:true}); 
+  openArticle(lastArticleOrder[idx+1], {replace:true});
 }
 
 async function markRead(entry){
   entry.status = "read";
   await patchEntry(entry.id, rec=>{ rec.status = "read"; });
-  try { 
+  try {
     const acc = CFG.accounts.find(a => a.id === entry.accountId);
-    if(acc) await apiMarkStatus(acc, [entry.rawId], "read", entry.rawFeedId); 
+    if(acc) await apiMarkStatus(acc, [entry.rawId], "read", entry.rawFeedId);
   } catch(e){ await enqueueOutbox({type:"mark-status", accountId: entry.accountId, rawIds:[entry.rawId], rawFeedId: entry.rawFeedId, status:"read"}); }
 }
 async function markUnread(){
   if(!currentEntry) return;
   currentEntry.status = "unread";
   await patchEntry(currentEntry.id, rec=>{ rec.status = "unread"; });
-  try { 
+  try {
     const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
-    if(acc) await apiMarkStatus(acc, [currentEntry.rawId], "unread", currentEntry.rawFeedId); 
+    if(acc) await apiMarkStatus(acc, [currentEntry.rawId], "unread", currentEntry.rawFeedId);
   } catch(e){ await enqueueOutbox({type:"mark-status", accountId: currentEntry.accountId, rawIds:[currentEntry.rawId], rawFeedId: currentEntry.rawFeedId, status:"unread"}); }
   toast("Marked unread");
 }
@@ -2382,7 +2451,7 @@ async function toggleStar(){
   currentEntry.starred = !currentEntry.starred;
   await patchEntry(currentEntry.id, rec=>{ rec.starred = currentEntry.starred; });
   await setProtection(currentEntry, currentEntry.starred);
-  try{ 
+  try{
     const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
     if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
   } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred}); }
@@ -2398,15 +2467,14 @@ async function sendToWallabag(){
 }
 
 /* ============================= STARTUP ============================= */
-
-  async function init(){
+async function init(){
   await openDb();
   applyTheme(); setupManifest(); populateConfigForm();
 
   $("#feed-sort-field").value = feedSort.field;
-  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u2193" : "\u2191";
   $("#art-sort-field").value = artSort.field;
-  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+  $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u2193" : "\u2191";
 
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 
