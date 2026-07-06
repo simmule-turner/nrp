@@ -939,30 +939,32 @@ async function resolveThumbnailSrc(url, entryId){
   }
 
   const sourceObjUrl = URL.createObjectURL(sourceBlob);
+  let thumbBlob;
+  
   try{
-    let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
+    thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
     if(!thumbBlob) thumbBlob = sourceBlob; 
-
-    // Prevent caching temporary blob URLs in the main asset store
-    if(!fullRec && !url.startsWith("blob:")){
-      await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
-    }
-
-    let thumbObj;
-    try{
-      await storeAsset(thumbKey, thumbBlob);
-      thumbObj = URL.createObjectURL(thumbBlob);
-    }catch(err){
-      if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size);
-      thumbObj = URL.createObjectURL(thumbBlob);
-    }
-    objectUrlCache.set(thumbKey, thumbObj);
-    return thumbObj;
   }catch(e){
-    return url;
+    // CRITICAL FIX: If canvas resizing fails (e.g., CORS taint, SVGs), fallback to the original blob!
+    thumbBlob = sourceBlob;
   }finally{
     URL.revokeObjectURL(sourceObjUrl);
   }
+
+  // Prevent caching temporary blob URLs in the main asset store
+  if(!fullRec && !url.startsWith("blob:")){
+    await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
+  }
+
+  try{
+    await storeAsset(thumbKey, thumbBlob);
+  }catch(err){
+    if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size);
+  }
+  
+  const thumbObj = URL.createObjectURL(thumbBlob);
+  objectUrlCache.set(thumbKey, thumbObj);
+  return thumbObj;
 }
 
 async function resolveImageSrc(url){
@@ -1019,7 +1021,6 @@ async function prefetchImagesForEntry(entry){
     const urls = extractImageUrls(entry.content);
     if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
     
-    // Identify the primary image URL that the UI uses for the thumbnail
     const thumbUrl = entry.enclosureUrl || (urls.length > 0 ? urls[0] : null);
     const thumbKey = "thumb_" + entry.id;
 
@@ -1027,7 +1028,6 @@ async function prefetchImagesForEntry(entry){
       const existing = await getCachedAsset(url);
       let sourceBlob = null;
 
-      // 1. Fetch or retrieve the full image blob
       if(existing && existing.blob){
         sourceBlob = existing.blob;
       } else {
@@ -1040,24 +1040,26 @@ async function prefetchImagesForEntry(entry){
         }catch(e){ }
       }
 
-      // 2. Eagerly generate and cache the thumbnail if this is the primary image
       if (url === thumbUrl && sourceBlob) {
         const existingThumb = await getCachedAsset(thumbKey);
         if (!existingThumb) {
           const sourceObjUrl = URL.createObjectURL(sourceBlob);
+          let thumbBlob;
           try {
-            let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
-            if (!thumbBlob) thumbBlob = sourceBlob; 
-            await storeAsset(thumbKey, thumbBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size); });
+            thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
           } catch(e) {
-            // Silently handle canvas rendering/image parsing errors
+            // Silently handle canvas rendering errors
           } finally {
             URL.revokeObjectURL(sourceObjUrl);
           }
+          
+          // CRITICAL FIX: Use original if thumbnail generation failed or wasn't needed
+          if (!thumbBlob) thumbBlob = sourceBlob; 
+
+          await storeAsset(thumbKey, thumbBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size); });
         }
       }
 
-      // 3. Fallback for opaque caching
       if(!existing && !sourceBlob){
         cacheOpaqueInBackground(url);
       }
@@ -1066,7 +1068,7 @@ async function prefetchImagesForEntry(entry){
     endBgTask();
   }
 }
-  
+
 async function setProtection(entry, protectedFlag){
   const urls = extractImageUrls(entry.content);
   if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
