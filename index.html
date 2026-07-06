@@ -908,9 +908,9 @@ async function generateThumbnailBlob(srcObjUrl, maxSize) {
   });
 }
 
-async function resolveThumbnailSrc(url){
+async function resolveThumbnailSrc(url, entryId){
   if(!url) return url;
-  const thumbKey = "thumb_" + url;
+  const thumbKey = entryId ? "thumb_" + entryId : "thumb_" + url;
   if(objectUrlCache.has(thumbKey)) return objectUrlCache.get(thumbKey);
 
   let rec = await getCachedAsset(thumbKey);
@@ -943,7 +943,8 @@ async function resolveThumbnailSrc(url){
     let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
     if(!thumbBlob) thumbBlob = sourceBlob; 
 
-    if(!fullRec){
+    // Prevent caching temporary blob URLs in the main asset store
+    if(!fullRec && !url.startsWith("blob:")){
       await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
     }
 
@@ -1017,29 +1018,62 @@ async function prefetchImagesForEntry(entry){
   try {
     const urls = extractImageUrls(entry.content);
     if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
+    
+    // Identify the primary image URL that the UI uses for the thumbnail
+    const thumbUrl = entry.enclosureUrl || (urls.length > 0 ? urls[0] : null);
+    const thumbKey = "thumb_" + entry.id;
+
     for(const url of urls){
       const existing = await getCachedAsset(url);
-      if(existing) continue;
-      try{
-        const resp = await fetch(url, {referrerPolicy:"no-referrer"});
-        if(resp.ok){
-          const blob = await resp.blob();
-          await storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
-          continue;
+      let sourceBlob = null;
+
+      // 1. Fetch or retrieve the full image blob
+      if(existing && existing.blob){
+        sourceBlob = existing.blob;
+      } else {
+        try{
+          const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+          if(resp.ok){
+            sourceBlob = await resp.blob();
+            await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
+          }
+        }catch(e){ }
+      }
+
+      // 2. Eagerly generate and cache the thumbnail if this is the primary image
+      if (url === thumbUrl && sourceBlob) {
+        const existingThumb = await getCachedAsset(thumbKey);
+        if (!existingThumb) {
+          const sourceObjUrl = URL.createObjectURL(sourceBlob);
+          try {
+            let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
+            if (!thumbBlob) thumbBlob = sourceBlob; 
+            await storeAsset(thumbKey, thumbBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size); });
+          } catch(e) {
+            // Silently handle canvas rendering/image parsing errors
+          } finally {
+            URL.revokeObjectURL(sourceObjUrl);
+          }
         }
-      }catch(e){ }
-      cacheOpaqueInBackground(url);
+      }
+
+      // 3. Fallback for opaque caching
+      if(!existing && !sourceBlob){
+        cacheOpaqueInBackground(url);
+      }
     }
   } finally {
     endBgTask();
   }
 }
+  
 async function setProtection(entry, protectedFlag){
   const urls = extractImageUrls(entry.content);
   if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
   
   const allUrls = [];
   urls.forEach(u=>{ allUrls.push(u); allUrls.push("thumb_"+u); });
+  allUrls.push("thumb_" + entry.id); // Protect the entry-specific thumbnail
 
   let starred = [];
   if (!protectedFlag) starred = await idbGetAll("entries","by_starred", true);
@@ -1058,7 +1092,8 @@ async function setProtection(entry, protectedFlag){
              if(e.id === entry.id) continue;
              const thisUrls = extractImageUrls(e.content);
              if(e.enclosureUrl) thisUrls.push(e.enclosureUrl);
-             if(thisUrls.includes(url) || thisUrls.some(u=> "thumb_"+u === url)){
+             // Ensure we don't unprotect a thumbnail that belongs to another starred entry
+             if(thisUrls.includes(url) || thisUrls.some(u=> "thumb_"+u === url) || "thumb_"+e.id === url){
                 stillNeeded = true;
                 break;
              }
@@ -1077,6 +1112,7 @@ async function gcOrphanImages(){
   entries.forEach(e=>{
     extractImageUrls(e.content).forEach(u=>{ referenced.add(u); referenced.add("thumb_"+u); });
     if(e.enclosureUrl) { referenced.add(e.enclosureUrl); referenced.add("thumb_"+e.enclosureUrl); }
+    referenced.add("thumb_" + e.id); // Prevent GC from purging valid thumbnails
   });
   for(const a of assets){
     if(!a.protectedFlag && !referenced.has(a.url)){
@@ -2199,6 +2235,7 @@ async function renderArticleList(){
     container.innerHTML = '<div class="empty"><div class="big">Nothing here</div>Pull to refresh on the feed list to fetch new items.</div>';
     return;
   }
+  const fragment = document.createDocumentFragment(); // Create fragment
   for(const e of entries){
     const row = document.createElement("div");
     row.className = "art-row" + (e.status==="read" ? " read" : "");
@@ -2217,10 +2254,12 @@ async function renderArticleList(){
         <div class="meta">${formatDate(e.publishedAt)} &middot; ${(e.contentSize/1024).toFixed(0)} KB</div>
       </div>`;
     row.addEventListener("click", ()=>openArticle(e.id));
-    container.appendChild(row);
+    //container.appendChild(row);
+    fragment.appendChild(row); // Append to fragment instead of container
     const img = row.querySelector("img.thumb");
-    if(img){ resolveThumbnailSrc(img.dataset.src).then(src=>{ img.src = src; }); }
+    if(img){ resolveThumbnailSrc(img.dataset.src, e.id).then(src=>{ img.src = src; }); }
   }
+  container.appendChild(fragment); // One single reflow at the end
 }
 function firstImageUrl(html){ const u = extractImageUrls(html); return u[0]||null; }
 function stripTags(html){ const d = document.createElement("div"); d.innerHTML = html||""; return d.textContent||""; }
