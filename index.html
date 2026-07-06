@@ -268,15 +268,39 @@ fieldset legend {
 
           <label for="acc-max">Max items per feed / sync</label>
           <input id="acc-max" type="number" min="1" step="1" value="50">
-
-          <div class="row between" style="margin-top:1em;">
-            <label style="margin:0;">Use CORS proxy for thumbnails</label>
-            <input id="acc-thumb-proxy-enabled" type="checkbox">
+          <hr>
+          <label style="margin-top:0;">API Proxy (Miniflux/NewsBlur requests)</label>
+          <div class="row between">
+            <label style="margin:0;">Use proxy for API requests</label>
+            <input id="acc-api-proxy-enabled" type="checkbox">
           </div>
-          <label for="acc-thumb-proxy-url">Proxy URL (prepended to image URL)</label>
-          <input id="acc-thumb-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <label for="acc-thumb-proxy-token">Proxy auth token (sent as X-Proxy-Token header)</label>
-          <input id="acc-thumb-proxy-token" type="password" placeholder="your-extremely-secure-random-token-here">
+          <label for="acc-api-proxy-url">Proxy URL (prepended to API request URL)</label>
+          <input id="acc-api-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
+          <div class="row between">
+            <label style="margin:0;">Send custom headers</label>
+            <input id="acc-api-proxy-headers-enabled" type="checkbox">
+          </div>
+          <div id="acc-api-proxy-headers-list"></div>
+          <div class="row" style="margin-top:.4em;">
+            <button type="button" id="acc-api-proxy-add-header" class="chip">+ Add header</button>
+          </div>
+
+          <hr>
+          <label>Image/Thumbnail Proxy (article images and thumbnails)</label>
+          <div class="row between">
+            <label style="margin:0;">Use proxy for image/thumbnail requests</label>
+            <input id="acc-nonapi-proxy-enabled" type="checkbox">
+          </div>
+          <label for="acc-nonapi-proxy-url">Proxy URL (prepended to image URL)</label>
+          <input id="acc-nonapi-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
+          <div class="row between">
+            <label style="margin:0;">Send custom headers</label>
+            <input id="acc-nonapi-proxy-headers-enabled" type="checkbox">
+          </div>
+          <div id="acc-nonapi-proxy-headers-list"></div>
+          <div class="row" style="margin-top:.4em;">
+            <button type="button" id="acc-nonapi-proxy-add-header" class="chip">+ Add header</button>
+          </div>
 
           <div class="row wrap" style="margin-top:1em;">
             <button id="btn-save-account" class="primary grow">Save Account</button>
@@ -601,7 +625,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.22"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.23"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -732,6 +756,37 @@ if (window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener("change", (e) => {
     if (CFG.themeMode === 'system') applyTheme();
   });
+}
+
+/* ============================= PROXY HELPERS ============================= */
+// Each account can independently configure two proxies:
+//  - "api": applied to Miniflux/NewsBlur API requests (mfFetch/nbFetch)
+//  - "nonApi": applied to article image and thumbnail-source fetches
+// Each has its own enabled flag, a URL prepended to the target URL, an
+// independent "send headers" flag, and an arbitrary list of header rows.
+function buildHeadersFromList(list){
+  const obj = {};
+  (list||[]).forEach(h=>{ if(h && h.key) obj[h.key] = h.value || ""; });
+  return obj;
+}
+// Returns {url, opts}. opts.headers is augmented (never replaced), so headers
+// already set by the caller survive alongside any proxy headers.
+function applyProxy(account, type, url, opts){
+  opts = Object.assign({}, opts||{});
+  if(!account) return {url, opts};
+  const enabledKey = type === "api" ? "apiProxyEnabled" : "nonApiProxyEnabled";
+  const urlKey = type === "api" ? "apiProxyUrl" : "nonApiProxyUrl";
+  const headersEnabledKey = type === "api" ? "apiProxyHeadersEnabled" : "nonApiProxyHeadersEnabled";
+  const headersKey = type === "api" ? "apiProxyHeaders" : "nonApiProxyHeaders";
+
+  let finalUrl = url;
+  if(account[enabledKey] && account[urlKey]){
+    finalUrl = account[urlKey] + url;
+  }
+  if(account[enabledKey] && account[headersEnabledKey] && account[headersKey] && account[headersKey].length){
+    opts.headers = Object.assign({}, opts.headers||{}, buildHeadersFromList(account[headersKey]));
+  }
+  return {url: finalUrl, opts};
 }
 
 /* ============================= MANIFEST / ICON ============================= */
@@ -958,6 +1013,8 @@ async function clearAllCachedData(){
   await tx("thumbnails","readwrite", store=>store.clear());
   for(const url of [...objectUrlCache.keys()]) revokeObjectUrlFor(url);
   objectUrlCache.clear();
+  opaqueAttempted.clear();
+  thumbInFlight.clear();
 }
 function updateCacheUsageDisplay(){
   cacheStats().then(s=>{ $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`; });
@@ -986,9 +1043,18 @@ async function generateThumbnailBlob(srcObjUrl, maxSize) {
 // write race with the `entries` store. An optional per-account CORS proxy
 // (with an optional X-Proxy-Token auth header) is used only for the network
 // fetch of the source image below — nowhere else in the app.
+const thumbInFlight = new Map();
+// De-dupes concurrent requests for the same entry's thumbnail (e.g. rapidly
+// switching between article lists that share an entry) so a second caller
+// shares the in-flight promise instead of triggering a redundant fetch.
 async function ensureThumbnail(entry){
   if(CFG.neverFetchImages) return null;
-
+  if(thumbInFlight.has(entry.id)) return thumbInFlight.get(entry.id);
+  const p = ensureThumbnailInner(entry).finally(()=>{ thumbInFlight.delete(entry.id); });
+  thumbInFlight.set(entry.id, p);
+  return p;
+}
+async function ensureThumbnailInner(entry){
   const cached = await getThumbFromDb(entry.id);
   if(cached){
     recordThumbDebug(`cache HIT id=${entry.id}`);
@@ -1010,14 +1076,13 @@ async function ensureThumbnail(entry){
     recordThumbDebug(`id=${entry.id} source = asset cache (${fullRec.size} bytes)`);
   }else{
     const account = CFG.accounts.find(a => a.id === entry.accountId);
-    const useProxy = !!(account && account.thumbProxyEnabled && account.thumbProxyUrl);
-    const fetchUrl = useProxy ? (account.thumbProxyUrl + imgUrl) : imgUrl;
-    const fetchOpts = {referrerPolicy:"no-referrer"};
-    if(useProxy && account.thumbProxyToken){
-      fetchOpts.headers = {"X-Proxy-Token": account.thumbProxyToken};
-    }
+    const isDataUri = imgUrl.startsWith("data:");
+    const useProxy = !isDataUri && !!(account && account.nonApiProxyEnabled && account.nonApiProxyUrl);
+    const proxied = isDataUri
+      ? {url: imgUrl, opts: {referrerPolicy:"no-referrer"}}
+      : applyProxy(account, "nonApi", imgUrl, {referrerPolicy:"no-referrer"});
     try{
-      const resp = await fetch(fetchUrl, fetchOpts);
+      const resp = await fetch(proxied.url, proxied.opts);
       if(resp.ok){
         sourceBlob = await resp.blob();
         recordThumbDebug(`id=${entry.id} source = network fetch${useProxy ? " (via proxy)" : ""} (${sourceBlob.size} bytes)`);
@@ -1029,7 +1094,7 @@ async function ensureThumbnail(entry){
     }
   }
   if(!sourceBlob){
-    cacheOpaqueInBackground(imgUrl);
+    cacheOpaqueInBackground(imgUrl, CFG.accounts.find(a => a.id === entry.accountId));
     recordThumbDebug(`id=${entry.id} no source available this attempt`);
     return null;
   }
@@ -1054,7 +1119,7 @@ async function ensureThumbnail(entry){
   }
 }
 
-async function resolveImageSrc(url){
+async function resolveImageSrc(url, entry){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
   let rec = await getCachedAsset(url);
@@ -1064,8 +1129,13 @@ async function resolveImageSrc(url){
     objectUrlCache.set(url, obj);
     return obj;
   }
+  const account = entry ? CFG.accounts.find(a => a.id === entry.accountId) : null;
+  const isDataUri = url.startsWith("data:");
+  const proxied = isDataUri
+    ? {url, opts: {referrerPolicy:"no-referrer"}}
+    : applyProxy(account, "nonApi", url, {referrerPolicy:"no-referrer"});
   try{
-    const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+    const resp = await fetch(proxied.url, proxied.opts);
     if(resp.ok){
       const blob = await resp.blob();
       try{ await storeAsset(url, blob); }catch(storeErr){ if(storeErr && storeErr.tooLarge) recordOversizedImage(url, storeErr.size); }
@@ -1075,50 +1145,74 @@ async function resolveImageSrc(url){
     }
   }catch(e){ }
 
-  cacheOpaqueInBackground(url);
+  cacheOpaqueInBackground(url, account);
   return url;
 }
 
 const opaqueAttempted = new Map();
 const OPAQUE_RETRY_MS = 10 * 60 * 1000;
 
-function cacheOpaqueInBackground(url){
+// `mode:"no-cors"` requests can only carry CORS-safelisted headers — custom
+// headers (e.g. proxy auth) are silently dropped by the browser no matter what
+// we set here. So only the proxy URL prefix is applied in this fallback path,
+// never custom headers; this only runs as a last resort after a normal
+// (headers-capable) fetch already failed.
+function cacheOpaqueInBackground(url, account){
   const last = opaqueAttempted.get(url);
   if(last && (Date.now() - last) < OPAQUE_RETRY_MS) return;
   opaqueAttempted.set(url, Date.now());
 
+  const isDataUri = url.startsWith("data:");
+  const fetchUrl = (!isDataUri && account && account.nonApiProxyEnabled && account.nonApiProxyUrl)
+    ? (account.nonApiProxyUrl + url)
+    : url;
+
   startBgTask();
-  fetch(url, {mode:"no-cors", referrerPolicy:"no-referrer"})
+  fetch(fetchUrl, {mode:"no-cors", referrerPolicy:"no-referrer"})
     .then(resp=>resp.blob())
     .then(blob=>{ if(blob && blob.size>0) return storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); }); })
     .catch(()=>{})
     .finally(endBgTask);
 }
-
+// Many feeds use lazy-loading (`data-src` holding the real image, `src` holding
+// a placeholder pixel). Prefer `data-src` when present on a given <img> tag.
 function extractImageUrls(html){
   if(!html) return [];
-  const out = []; const re = /<img[^>]+src=["']([^"']+)["']/gi;
-  let m; while((m = re.exec(html))) out.push(m[1]);
+  const out = [];
+  const tagRe = /<img\b[^>]*>/gi;
+  let m;
+  while((m = tagRe.exec(html))){
+    const tag = m[0];
+    const dataSrcMatch = tag.match(/data-src=["']([^"']+)["']/i);
+    const srcMatch = tag.match(/\ssrc=["']([^"']+)["']/i);
+    const url = (dataSrcMatch && dataSrcMatch[1]) || (srcMatch && srcMatch[1]);
+    if(url) out.push(url);
+  }
   return out;
 }
 async function prefetchImagesForEntry(entry){
   if(CFG.neverFetchImages) return;
   startBgTask();
   try {
+    const account = CFG.accounts.find(a => a.id === entry.accountId);
     const urls = extractImageUrls(entry.content);
     if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
     for(const url of urls){
       const existing = await getCachedAsset(url);
       if(existing) continue;
+      const isDataUri = url.startsWith("data:");
+      const proxied = isDataUri
+        ? {url, opts: {referrerPolicy:"no-referrer"}}
+        : applyProxy(account, "nonApi", url, {referrerPolicy:"no-referrer"});
       try{
-        const resp = await fetch(url, {referrerPolicy:"no-referrer"});
+        const resp = await fetch(proxied.url, proxied.opts);
         if(resp.ok){
           const blob = await resp.blob();
           await storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
           continue;
         }
       }catch(e){ }
-      cacheOpaqueInBackground(url);
+      cacheOpaqueInBackground(url, account);
     }
   } finally {
     endBgTask();
@@ -1236,7 +1330,8 @@ async function mfFetch(account, path, opts){
   opts = opts || {};
   const headers = Object.assign({"X-Auth-Token":account.token}, opts.headers||{});
   if(opts.body) headers["Content-Type"] = "application/json";
-  const resp = await fetch(mfBase(account)+path, Object.assign({}, opts, {headers}));
+  const proxied = applyProxy(account, "api", mfBase(account)+path, Object.assign({}, opts, {headers}));
+  const resp = await fetch(proxied.url, proxied.opts);
   if(!resp.ok) throw new Error("Miniflux "+resp.status+" "+path);
   if(resp.status === 204) return null;
   return resp.json();
@@ -1320,9 +1415,10 @@ async function nbFetch(account, path, opts = {}) {
     }
 
     const fetchOptions = { ...opts, headers: headers };
+    const proxied = applyProxy(account, "api", account.url + path, fetchOptions);
 
     try {
-        const res = await fetch(account.url + path, fetchOptions);
+        const res = await fetch(proxied.url, proxied.opts);
         if (res.status === 401 || res.status === 403) {
             NB_STATE.isAuthenticated = false;
             throw new Error("Authentication failed or session expired (Unauthorized/Forbidden)");
@@ -1637,10 +1733,15 @@ $("#btn-add-account").addEventListener("click", () => {
   $("#acc-token").value = "";
   $("#acc-user").value = "";
   $("#acc-pass").value = "";
-  $("#acc-max").value = "50";
-  $("#acc-thumb-proxy-enabled").checked = false;
-  $("#acc-thumb-proxy-url").value = "";
-  $("#acc-thumb-proxy-token").value = "";
+  $("#acc-max").value = "25";
+  $("#acc-api-proxy-enabled").checked = false;
+  $("#acc-api-proxy-url").value = "";
+  $("#acc-api-proxy-headers-enabled").checked = false;
+  renderProxyHeaderRows("acc-api-proxy-headers-list", []);
+  $("#acc-nonapi-proxy-enabled").checked = false;
+  $("#acc-nonapi-proxy-url").value = "";
+  $("#acc-nonapi-proxy-headers-enabled").checked = false;
+  renderProxyHeaderRows("acc-nonapi-proxy-headers-list", []);
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
@@ -1651,6 +1752,41 @@ $("#btn-cancel-account").addEventListener("click", () => {
   $("#btn-add-account").classList.remove("hidden");
 });
 
+/* Proxy header row management (used for both API and non-API proxy sections) */
+function createHeaderRow(containerId, key, value){
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.marginTop = ".4em";
+  const keyInput = document.createElement("input");
+  keyInput.type = "text"; keyInput.placeholder = "Header name"; keyInput.className = "hdr-key";
+  keyInput.value = key || ""; keyInput.style.flex = "1";
+  const valInput = document.createElement("input");
+  valInput.type = "text"; valInput.placeholder = "Header value"; valInput.className = "hdr-val";
+  valInput.value = value || ""; valInput.style.flex = "1";
+  const rmBtn = document.createElement("button");
+  rmBtn.type = "button"; rmBtn.className = "icon danger"; rmBtn.title = "Remove header";
+  rmBtn.textContent = "\u2715";
+  rmBtn.addEventListener("click", ()=>row.remove());
+  row.appendChild(keyInput); row.appendChild(valInput); row.appendChild(rmBtn);
+  $("#"+containerId).appendChild(row);
+}
+function renderProxyHeaderRows(containerId, headers){
+  const container = $("#"+containerId);
+  container.innerHTML = "";
+  (headers||[]).forEach(h=>createHeaderRow(containerId, h.key, h.value));
+}
+function collectProxyHeaders(containerId){
+  const rows = $("#"+containerId).querySelectorAll(".row");
+  const out = [];
+  rows.forEach(row=>{
+    const k = row.querySelector(".hdr-key");
+    const v = row.querySelector(".hdr-val");
+    if(k && k.value.trim()) out.push({key:k.value.trim(), value: v ? v.value : ""});
+  });
+  return out;
+}
+$("#acc-api-proxy-add-header").addEventListener("click", ()=>createHeaderRow("acc-api-proxy-headers-list","",""));
+$("#acc-nonapi-proxy-add-header").addEventListener("click", ()=>createHeaderRow("acc-nonapi-proxy-headers-list","",""));
 $("#acc-type").addEventListener("change", (e) => {
   const t = e.target.value;
   $("#acc-mf-fields").classList.toggle("hidden", t !== "miniflux");
@@ -1665,9 +1801,14 @@ $("#btn-save-account").addEventListener("click", () => {
     name: $("#acc-name").value.trim() || $("#acc-type").value,
     url: $("#acc-url").value.trim(),
     maxItems: parseInt($("#acc-max").value, 10) || 50,
-    thumbProxyEnabled: $("#acc-thumb-proxy-enabled").checked,
-    thumbProxyUrl: $("#acc-thumb-proxy-url").value.trim(),
-    thumbProxyToken: $("#acc-thumb-proxy-token").value
+    apiProxyEnabled: $("#acc-api-proxy-enabled").checked,
+    apiProxyUrl: $("#acc-api-proxy-url").value.trim(),
+    apiProxyHeadersEnabled: $("#acc-api-proxy-headers-enabled").checked,
+    apiProxyHeaders: collectProxyHeaders("acc-api-proxy-headers-list"),
+    nonApiProxyEnabled: $("#acc-nonapi-proxy-enabled").checked,
+    nonApiProxyUrl: $("#acc-nonapi-proxy-url").value.trim(),
+    nonApiProxyHeadersEnabled: $("#acc-nonapi-proxy-headers-enabled").checked,
+    nonApiProxyHeaders: collectProxyHeaders("acc-nonapi-proxy-headers-list")
   };
   if(acc.type === "miniflux") { acc.token = $("#acc-token").value.trim(); }
   if(acc.type === "newsblur") { acc.username = $("#acc-user").value.trim(); acc.password = $("#acc-pass").value; }
@@ -1692,9 +1833,14 @@ window.editAccount = (id) => {
   $("#acc-token").value = acc.token || "";
   $("#acc-user").value = acc.username || "";
   $("#acc-pass").value = acc.password || "";
-  $("#acc-thumb-proxy-enabled").checked = !!acc.thumbProxyEnabled;
-  $("#acc-thumb-proxy-url").value = acc.thumbProxyUrl || "";
-  $("#acc-thumb-proxy-token").value = acc.thumbProxyToken || "";
+  $("#acc-api-proxy-enabled").checked = !!acc.apiProxyEnabled;
+  $("#acc-api-proxy-url").value = acc.apiProxyUrl || "";
+  $("#acc-api-proxy-headers-enabled").checked = !!acc.apiProxyHeadersEnabled;
+  renderProxyHeaderRows("acc-api-proxy-headers-list", acc.apiProxyHeaders || []);
+  $("#acc-nonapi-proxy-enabled").checked = !!acc.nonApiProxyEnabled;
+  $("#acc-nonapi-proxy-url").value = acc.nonApiProxyUrl || "";
+  $("#acc-nonapi-proxy-headers-enabled").checked = !!acc.nonApiProxyHeadersEnabled;
+  renderProxyHeaderRows("acc-nonapi-proxy-headers-list", acc.nonApiProxyHeaders || []);
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
@@ -2330,7 +2476,7 @@ async function renderArticleList(){
         if(existing){
           img.src = existing;
         }else{
-          ensureThumbnail(e).then(src=>{
+          thumbLimiter(()=>ensureThumbnail(e)).then(src=>{
             if(src){
               img.src = src;
             }else{
@@ -2343,6 +2489,26 @@ async function renderArticleList(){
     }
   }
 }
+// Simple concurrency-limited runner, used to cap how many thumbnail fetches
+// run at once when a feed has many articles (avoids firing dozens of
+// simultaneous network requests when opening a large unread list).
+function createLimiter(maxConcurrent){
+  let active = 0;
+  const queue = [];
+  function next(){
+    if(active >= maxConcurrent || queue.length === 0) return;
+    active++;
+    const job = queue.shift();
+    job.fn().then(job.resolve, job.reject).finally(()=>{ active--; next(); });
+  }
+  return function run(fn){
+    return new Promise((resolve, reject)=>{
+      queue.push({fn, resolve, reject});
+      next();
+    });
+  };
+}
+const thumbLimiter = createLimiter(4);
 function firstImageUrl(html){ const u = extractImageUrls(html); return u[0]||null; }
 function stripTags(html){ const d = document.createElement("div"); d.innerHTML = html||""; return d.textContent||""; }
 function formatDate(iso){ try{ return new Date(iso).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch(e){ return ""; } }
@@ -2409,12 +2575,12 @@ async function openArticle(entryId, opts){
     for(const img of inlineImgs){
       const orig = img.getAttribute("src");
       img.addEventListener("click", ()=>window.open(linkTarget || orig, "_blank", "noopener"));
-      if(orig) resolveImageSrc(orig).then(src=>{ img.src = src; });
+      if(orig) resolveImageSrc(orig, entry).then(src=>{ img.src = src; });
     }
   }else if(entry.enclosureUrl){
     enc.classList.remove("hidden");
     enc.onclick = ()=>window.open(linkTarget || entry.enclosureUrl, "_blank", "noopener");
-    resolveImageSrc(entry.enclosureUrl).then(src=>{ enc.src = src; });
+    resolveImageSrc(entry.enclosureUrl, entry).then(src=>{ enc.src = src; });
   }else{ enc.classList.add("hidden"); }
 
   if(CFG.imageCacheMode === "on-read" && !CFG.neverFetchImages){ prefetchImagesForEntry(entry); }
