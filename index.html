@@ -909,64 +909,37 @@ async function generateThumbnailBlob(srcObjUrl, maxSize) {
 }
 
 async function resolveThumbnailSrc(url, entryId){
-  if(!url) return url;
-  const thumbKey = entryId ? "thumb_" + entryId : "thumb_" + url;
-  if(objectUrlCache.has(thumbKey)) return objectUrlCache.get(thumbKey);
-
+  const thumbKey = "thumb_" + entryId;
+  
+  // 1. Check if we already have a generated thumbnail in IDB
   let rec = await getCachedAsset(thumbKey);
-  if(rec && rec.blob){
-    touchAsset(thumbKey);
-    const obj = URL.createObjectURL(rec.blob);
-    objectUrlCache.set(thumbKey, obj);
-    return obj;
+  if(rec && rec.blob) return URL.createObjectURL(rec.blob);
+
+  // 2. Check if we have the ORIGINAL image in IDB
+  let fullRec = await getCachedAsset(url);
+  if (fullRec && fullRec.blob) {
+      // Try to generate thumbnail from the local blob
+      try {
+          const sourceObjUrl = URL.createObjectURL(fullRec.blob);
+          const thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
+          URL.revokeObjectURL(sourceObjUrl);
+          
+          if (thumbBlob) {
+              await storeAsset(thumbKey, thumbBlob);
+              return URL.createObjectURL(thumbBlob);
+          }
+      } catch (e) {
+          console.warn("Thumbnail generation failed, using original as fallback.");
+      }
+      
+      // 3. FALLBACK: If generation failed, return the original blob URL instead
+      return URL.createObjectURL(fullRec.blob);
   }
 
-  let sourceBlob = null;
-  const fullRec = await getCachedAsset(url);
-  if(fullRec && fullRec.blob){
-    touchAsset(url);
-    sourceBlob = fullRec.blob;
-  }else{
-    try{
-      const resp = await fetch(url, {referrerPolicy:"no-referrer"});
-      if(resp.ok) sourceBlob = await resp.blob();
-    }catch(e){ }
-  }
-
-  if(!sourceBlob){
-    cacheOpaqueInBackground(url);
-    return url;
-  }
-
-  const sourceObjUrl = URL.createObjectURL(sourceBlob);
-  let thumbBlob;
-  
-  try{
-    thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
-    if(!thumbBlob) thumbBlob = sourceBlob; 
-  }catch(e){
-    // CRITICAL FIX: If canvas resizing fails (e.g., CORS taint, SVGs), fallback to the original blob!
-    thumbBlob = sourceBlob;
-  }finally{
-    URL.revokeObjectURL(sourceObjUrl);
-  }
-
-  // Prevent caching temporary blob URLs in the main asset store
-  if(!fullRec && !url.startsWith("blob:")){
-    await storeAsset(url, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
-  }
-
-  try{
-    await storeAsset(thumbKey, thumbBlob);
-  }catch(err){
-    if(err && err.tooLarge) recordOversizedImage(thumbKey, err.size);
-  }
-  
-  const thumbObj = URL.createObjectURL(thumbBlob);
-  objectUrlCache.set(thumbKey, thumbObj);
-  return thumbObj;
+  // 4. If we don't have the original, only then fetch from web
+  return url; 
 }
-
+  
 async function resolveImageSrc(url){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
@@ -1068,7 +1041,7 @@ async function prefetchImagesForEntry(entry){
     endBgTask();
   }
 }
-
+  
 async function setProtection(entry, protectedFlag){
   const urls = extractImageUrls(entry.content);
   if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
