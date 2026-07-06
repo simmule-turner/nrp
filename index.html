@@ -554,7 +554,7 @@ fieldset legend {
     <div class="sticky-header">
       <div class="tabs">
         <button class="tab" data-filter="unread">Unread</button>
-        <button class="tab" data-filter="all">All</button>
+        <button class="tab" data-filter="read">Read</button>
         <button class="tab" data-filter="starred">Starred</button>
       </div>
     </div>
@@ -591,7 +591,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.19"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.21"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [], 
@@ -831,7 +831,6 @@ async function patchEntry(id, patchFn){
 }
 async function getEntriesByFeed(feedId){ return idbGetAll("entries","by_feed", feedId); }
 async function deleteEntries(ids){
-  ids.forEach(id=>revokeObjectUrlFor("thumb_entry_"+id));
   return tx("entries","readwrite", store=>{ ids.forEach(id=>store.delete(id)); });
 }
 /* ---- oversized image log (diagnostic; images too large to fit in the per-item cache cap) ---- */
@@ -914,6 +913,15 @@ function updateCacheUsageDisplay(){
   cacheStats().then(s=>{ $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`; });
 }
 
+function blobToDataUrl(blob){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+  
 async function generateThumbnailBlob(srcObjUrl, maxSize) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -938,7 +946,7 @@ async function generateThumbnailBlob(srcObjUrl, maxSize) {
 // entirely since they're never stored in the `assets` cache.
 async function ensureThumbnail(entry){
   if(CFG.neverFetchImages) return null;
-  if(entry.thumbBlob) return entry.thumbBlob;
+  if(entry.thumbDataUrl) return entry.thumbDataUrl;
   const imgUrl = entry.enclosureUrl || firstImageUrl(entry.content);
   if(!imgUrl) return null;
 
@@ -960,16 +968,16 @@ async function ensureThumbnail(entry){
 
   const sourceObjUrl = URL.createObjectURL(sourceBlob);
   try{
-// REPLACE:
     let thumbBlob = await generateThumbnailBlob(sourceObjUrl, 144);
     if(!thumbBlob) thumbBlob = sourceBlob;
-    entry.thumbBlob = thumbBlob;
-    await patchEntry(entry.id, rec=>{ rec.thumbBlob = thumbBlob; });
+    const thumbDataUrl = await blobToDataUrl(thumbBlob);
+    entry.thumbDataUrl = thumbDataUrl;
+    await patchEntry(entry.id, rec=>{ rec.thumbDataUrl = thumbDataUrl; });
 
     if(!fullRec){
       storeAsset(imgUrl, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(imgUrl, err.size); });
     }
-    return thumbBlob;
+    return thumbDataUrl;
   }catch(e){
     return null;
   }finally{
@@ -977,13 +985,8 @@ async function ensureThumbnail(entry){
   }
 }
 
-function thumbObjectUrlFor(entry){
-  const key = "thumb_entry_" + entry.id;
-  if(objectUrlCache.has(key)) return objectUrlCache.get(key);
-  if(!entry.thumbBlob) return null;
-  const obj = URL.createObjectURL(entry.thumbBlob);
-  objectUrlCache.set(key, obj);
-  return obj;
+function thumbSrcFor(entry){
+  return entry.thumbDataUrl || null;
 }
 
 async function resolveImageSrc(url){
@@ -1984,7 +1987,7 @@ async function syncFeed(feedObj){
       if(existing){
         e.status = existing.status;
         e.starred = existing.starred;
-        if(existing.thumbBlob) e.thumbBlob = existing.thumbBlob;
+        if(existing.thumbDataUrl) e.thumbDataUrl = existing.thumbDataUrl;
       }
     }
     await putEntries(entries);
@@ -2216,6 +2219,7 @@ async function renderArticleList(){
     entries = await getEntriesByFeed(currentFeedUid);
   }
   if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
+  else if(articleFilter==="read") entries = entries.filter(e=>e.status==="read");
   else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
   entries.sort((a,b)=>{
     let cmp = artSort.field==="date"
@@ -2248,15 +2252,13 @@ async function renderArticleList(){
       </div>`;
     row.addEventListener("click", ()=>openArticle(e.id));
     container.appendChild(row);
-// REPLACE:
     const img = row.querySelector("img.thumb");
     if(img){
-      const existing = thumbObjectUrlFor(e);
+      const existing = thumbSrcFor(e);
       if(existing){
         img.src = existing;
       }else{
-        ensureThumbnail(e).then(()=>{
-          const src = thumbObjectUrlFor(e);
+        ensureThumbnail(e).then(src=>{
           if(src){
             img.src = src;
           }else{
@@ -2270,7 +2272,6 @@ async function renderArticleList(){
         });
       }
     }
-
   }
 }
 function firstImageUrl(html){ const u = extractImageUrls(html); return u[0]||null; }
