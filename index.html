@@ -928,6 +928,7 @@ function appLog(type, message, size){
 }
 function recordOversizedImage(url, size){ appLog("oversized", url, size); }
 function recordThumbDebug(msg){ appLog("thumb", msg); }
+function debug(msg){ appLog("debug", msg); }  
 
 // Thumbnails are stored in their own IndexedDB object store, keyed by entry id,
 // as small base64 JPEG data URLs. A dedicated store (rather than a field on the
@@ -1326,7 +1327,7 @@ async function apiMarkStatus(account, rawEntryIds, status, rawFeedId) {
   throw new Error("Unknown account type");
 }
 async function apiToggleBookmark(account, rawEntryId, rawFeedId, isStarred) {
-  if (account.type === 'miniflux') return mfToggleBookmark(account, rawEntryId);
+  if (account.type === 'miniflux') return mfSetStarred(account, rawEntryId, isStarred);
   if (account.type === 'newsblur') return nbToggleBookmark(account, rawEntryId, rawFeedId, isStarred);
   throw new Error("Unknown account type");
 }
@@ -1373,8 +1374,25 @@ async function mfGetUnreadEntries(account, feedId){
 async function mfMarkStatus(account, entryIds, status){
   return mfFetch(account, "/v1/entries", {method:"PUT", body:JSON.stringify({entry_ids:entryIds.map(i=>Number(i)), status})});
 }
-async function mfToggleBookmark(account, entryId){
-  return mfFetch(account, `/v1/entries/${Number(entryId)}/bookmark`, {method:"PUT"});
+// Miniflux added an explicit, idempotent way to set starred status via the
+// bulk PUT /v1/entries endpoint (same endpoint mfMarkStatus already uses for
+// read/unread), available since Miniflux 2.3.2:
+//   PUT /v1/entries  { "entry_ids": [...], "starred": true|false }
+// This is a real "set to X" operation (unlike /v1/entries/{id}/bookmark,
+// which only ever toggles), so calling it repeatedly with the same desired
+// value is always safe — no more silent flip-backs from retried/duplicated
+// calls. Falls back to the toggle endpoint only if the bulk call fails,
+// for compatibility with pre-2.3.2 Miniflux instances.
+async function mfSetStarred(account, entryId, desiredStarred){
+  try{
+    return await mfFetch(account, "/v1/entries", {
+      method:"PUT",
+      body: JSON.stringify({entry_ids:[Number(entryId)], starred: desiredStarred})
+    });
+  }catch(e){
+    debug(`mfSetStarred bulk endpoint failed for id=${entryId}, falling back to toggle: ${e && e.message}`);
+    return mfFetch(account, `/v1/entries/${Number(entryId)}/bookmark`, {method:"PUT"});
+  }
 }
 
 /* ============================= NEWSBLUR API ============================= */
