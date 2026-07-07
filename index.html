@@ -875,7 +875,6 @@ async function idbGetAll(storeName, indexName, query) {
   // sometimes passing an explicit range is safer.
   return reqp(query !== undefined ? store.getAll(query) : store.getAll());
 }
-
 /* ---- entries ---- */
 async function putEntries(list){ return tx("entries", "readwrite", store=>{ list.forEach(e=>store.put(e)); }); }
 async function getEntry(id){ return tx("entries","readonly", store=>reqp(store.get(id))); }
@@ -1327,8 +1326,7 @@ async function apiMarkStatus(account, rawEntryIds, status, rawFeedId) {
   throw new Error("Unknown account type");
 }
 async function apiToggleBookmark(account, rawEntryId, rawFeedId, isStarred) {
-  //if (account.type === 'miniflux') return mfToggleBookmark(account, rawEntryId); srt
-  if (account.type === 'miniflux') return mfSetStarred(account, rawEntryId, isStarred);
+  if (account.type === 'miniflux') return mfToggleBookmark(account, rawEntryId);
   if (account.type === 'newsblur') return nbToggleBookmark(account, rawEntryId, rawFeedId, isStarred);
   throw new Error("Unknown account type");
 }
@@ -1376,39 +1374,6 @@ async function mfMarkStatus(account, entryIds, status){
   return mfFetch(account, "/v1/entries", {method:"PUT", body:JSON.stringify({entry_ids:entryIds.map(i=>Number(i)), status})});
 }
 async function mfToggleBookmark(account, entryId){
-  return mfFetch(account, `/v1/entries/${Number(entryId)}/bookmark`, {method:"PUT"});
-}
-// REPLACE:
-function recordStarDebug(msg){ /*appLog("star", msg);*/ }
-// Bypasses mfFetch here (rather than relying on its generic error message) so
-// we can capture and log the actual HTTP status code and response body when
-// the bulk "set starred" call is rejected — needed to diagnose exactly why
-// it's failing (unsupported on this Miniflux version? wrong payload shape?
-// something else?) instead of guessing again.
-async function mfSetStarred(account, entryId, desiredStarred){
-  const headers = {"X-Auth-Token": account.token, "Content-Type": "application/json"};
-  const body = JSON.stringify({entry_ids:[Number(entryId)], starred: desiredStarred});
-  const proxied = applyProxy(account, "api", mfBase(account)+"/v1/entries", {method:"PUT", headers, body});
-
-  try{
-    const resp = await fetch(proxied.url, proxied.opts);
-    if(resp.ok){
-      recordStarDebug(`bulk set OK id=${entryId} desired=${desiredStarred} status=${resp.status}`);
-      if(resp.status === 204) return null;
-      return await resp.json().catch(()=>null);
-    }
-    const bodyText = await resp.text().catch(()=>"");
-    recordStarDebug(`bulk set REJECTED id=${entryId} desired=${desiredStarred} status=${resp.status} body=${bodyText.slice(0,300)}`);
-  }catch(e){
-    recordStarDebug(`bulk set THREW id=${entryId} desired=${desiredStarred}: ${e && e.message}`);
-  }
-
-  // Fallback only reached if the bulk call above failed. This endpoint is a
-  // pure TOGGLE, not a set, so it can only be trusted to move in the correct
-  // direction if the entry's current remote state is what we expect — it may
-  // not match `desiredStarred`. Logged clearly since this path indicates the
-  // primary (reliable) path isn't working and needs investigation.
-  recordStarDebug(`FALLING BACK to toggle endpoint for id=${entryId} (desired=${desiredStarred} not guaranteed)`);
   return mfFetch(account, `/v1/entries/${Number(entryId)}/bookmark`, {method:"PUT"});
 }
 
@@ -2540,7 +2505,7 @@ async function openArticle(entryId, opts){
   const starBtn = document.createElement("button");
   starBtn.className = "icon"; starBtn.setAttribute("aria-label","Star");
   starBtn.innerHTML = entry.starred ? "\u2B50" : "\u2606";
-  starBtn.addEventListener("click", ()=>toggleStar()); //srt
+  starBtn.addEventListener("click", ()=>toggleStar());
 
   const unreadBtn = document.createElement("button");
   unreadBtn.className = "icon"; unreadBtn.title = "Mark unread"; unreadBtn.textContent = "\u{1F648}";
@@ -2620,33 +2585,16 @@ async function markUnread(){
   toast("Marked unread");
 }
 async function toggleStar(){
-  recordStarDebug("toggleStar CLICKED");
-  if(!currentEntry){ recordStarDebug("toggleStar aborted: currentEntry is null"); return; }
-  const targetId = currentEntry.id;
-  const newStarred = !currentEntry.starred;
-  recordStarDebug(`toggleStar id=${targetId} accountId=${currentEntry.accountId} rawId=${currentEntry.rawId} current=${currentEntry.starred} -> ${newStarred}`);
-  currentEntry.starred = newStarred;
+  if(!currentEntry) return;
+  currentEntry.starred = !currentEntry.starred;
+  await patchEntry(currentEntry.id, rec=>{ rec.starred = currentEntry.starred; });
+  await setProtection(currentEntry, currentEntry.starred);
   try{
-    await patchEntry(currentEntry.id, rec=>{ rec.starred = currentEntry.starred; });
-    recordStarDebug(`patchEntry OK id=${targetId}`);
-    await setProtection(currentEntry, currentEntry.starred);
-    recordStarDebug(`setProtection OK id=${targetId}`);
     const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
-    recordStarDebug(`account lookup id=${targetId} accountId=${currentEntry.accountId} found=${!!acc}`);
-    if(acc){
-      try{
-        await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
-      }catch(apiErr){
-        recordStarDebug(`apiToggleBookmark THREW id=${targetId}: ${apiErr && apiErr.message}`);
-        await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred});
-      }
-    }
-  }catch(outerErr){
-    recordStarDebug(`toggleStar UNEXPECTED ERROR id=${targetId}: ${outerErr && outerErr.message}`);
-  }
+    if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
+  } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred}); }
   const starBtn = $("#top-actions button[aria-label='Star']");
   if(starBtn) starBtn.innerHTML = currentEntry.starred ? "\u2B50" : "\u2606";
-  recordStarDebug(`toggleStar DONE id=${targetId} finalStarred=${currentEntry.starred}`);
 }
 async function sendToWallabag(){
   if(!currentEntry) return;
