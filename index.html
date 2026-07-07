@@ -260,10 +260,9 @@ fieldset legend {
             <input id="acc-token" type="password">
           </div>
           <div id="acc-nb-fields" class="hidden">
-            <label for="acc-user">Username</label>
-            <input id="acc-user" type="text">
-            <label for="acc-pass">Password</label>
-            <input id="acc-pass" type="password">
+            <p class="muted" style="font-size:11px; margin:0;">
+              NewsBlur requires the API Proxy below to be enabled. Configure the proxy URL and any auth headers your proxy needs (e.g. session cookie, API key) there.
+            </p>
           </div>
 
           <label for="acc-max">Max items per feed / sync</label>
@@ -625,7 +624,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.23"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.24"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1371,45 +1370,13 @@ async function mfToggleBookmark(account, entryId){
 }
 
 /* ============================= NEWSBLUR API ============================= */
-const NB_STATE = {
-    isAuthenticated: false,
-    isLoggingIn: null,
-    feeds: []
-};
-
-async function loginToNewsBlur(account) {
-    if (NB_STATE.isLoggingIn) return NB_STATE.isLoggingIn;
-
-    NB_STATE.isLoggingIn = (async () => {
-        if (account.username && account.password) {
-            NB_STATE.isAuthenticated = true;
-        } else {
-            NB_STATE.isAuthenticated = false;
-            console.error("[NewsBlur API] Missing username or password configurations.");
-        }
-        NB_STATE.isLoggingIn = null;
-        return NB_STATE.isAuthenticated;
-    })();
-
-    return NB_STATE.isLoggingIn;
-}
-
-function clearFeeds() {
-    console.log("Clearing feed cache...");
-    NB_STATE.feeds = [];
-}
-
+// NewsBlur has no first-party CORS support and no per-request API token, so
+// NRP does not manage NewsBlur credentials directly. All auth (session
+// cookie, API key, etc.) must be supplied via the account's API Proxy headers
+// configured in Settings — nbFetch only adds the Accept header and routes
+// everything (URL rewrite + auth headers) through applyProxy.
 async function nbFetch(account, path, opts = {}) {
-    if (!NB_STATE.isAuthenticated) {
-        await loginToNewsBlur(account);
-    }
-
-    const headers = {
-        'Accept': 'application/json',
-        'X-NB-User': account.username,
-        'X-NB-Pass': account.password
-    };
-
+    const headers = { 'Accept': 'application/json' };
     if (opts.headers && opts.headers['Content-Type']) {
         headers['Content-Type'] = opts.headers['Content-Type'];
     }
@@ -1420,7 +1387,6 @@ async function nbFetch(account, path, opts = {}) {
     try {
         const res = await fetch(proxied.url, proxied.opts);
         if (res.status === 401 || res.status === 403) {
-            NB_STATE.isAuthenticated = false;
             throw new Error("Authentication failed or session expired (Unauthorized/Forbidden)");
         }
         if (!res.ok) {
@@ -1731,8 +1697,6 @@ $("#btn-add-account").addEventListener("click", () => {
   $("#acc-name").value = "";
   $("#acc-url").value = "";
   $("#acc-token").value = "";
-  $("#acc-user").value = "";
-  $("#acc-pass").value = "";
   $("#acc-max").value = "25";
   $("#acc-api-proxy-enabled").checked = false;
   $("#acc-api-proxy-url").value = "";
@@ -1793,6 +1757,7 @@ $("#acc-type").addEventListener("change", (e) => {
   $("#acc-nb-fields").classList.toggle("hidden", t !== "newsblur");
 });
 
+// REPLACE:
 $("#btn-save-account").addEventListener("click", () => {
   const id = $("#acc-form-id").value || ("acc_" + Date.now());
   const acc = {
@@ -1811,10 +1776,12 @@ $("#btn-save-account").addEventListener("click", () => {
     nonApiProxyHeaders: collectProxyHeaders("acc-nonapi-proxy-headers-list")
   };
   if(acc.type === "miniflux") { acc.token = $("#acc-token").value.trim(); }
-  if(acc.type === "newsblur") { acc.username = $("#acc-user").value.trim(); acc.password = $("#acc-pass").value; }
+  if(acc.type === "newsblur" && (!acc.apiProxyEnabled || !acc.apiProxyUrl)){
+    toast("NewsBlur accounts require the API Proxy to be enabled with a URL");
+    return;
+  }
 
-  const existingIdx = CFG.accounts.findIndex(a => a.id === id);
-  if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
+  const existingIdx = CFG.accounts.findIndex(a => a.id === id);       if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
   else CFG.accounts.push(acc);
 
   saveConfig(CFG);
@@ -1831,10 +1798,7 @@ window.editAccount = (id) => {
   $("#acc-url").value = acc.url;
   $("#acc-max").value = acc.maxItems;
   $("#acc-token").value = acc.token || "";
-  $("#acc-user").value = acc.username || "";
-  $("#acc-pass").value = acc.password || "";
-  $("#acc-api-proxy-enabled").checked = !!acc.apiProxyEnabled;
-  $("#acc-api-proxy-url").value = acc.apiProxyUrl || "";
+  $("#acc-api-proxy-enabled").checked = !!acc.apiProxyEnabled;  $("#acc-api-proxy-url").value = acc.apiProxyUrl || "";
   $("#acc-api-proxy-headers-enabled").checked = !!acc.apiProxyHeadersEnabled;
   renderProxyHeaderRows("acc-api-proxy-headers-list", acc.apiProxyHeaders || []);
   $("#acc-nonapi-proxy-enabled").checked = !!acc.nonApiProxyEnabled;
