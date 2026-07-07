@@ -374,7 +374,7 @@ fieldset legend {
 
         <label>Feed List</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.25em;">
-          <select id="cfg-ff-feed" class="grow" style="flex: 7;">
+          <select id="cfg-ff-feed" class="grow" style="flex: 8;">
     <optgroup label="System & Generics">
         <option value="system">Default</option>
         <option value="serif">Serif</option>
@@ -389,16 +389,13 @@ fieldset legend {
         <option value="consolas">Consolas</option>
     </optgroup>
           </select>
-          <div style="flex: 3; display: flex; align-items: center; gap: 0.25em;">
-          <input id="cfg-fs-feed" type="range" min="10" max="40" style="width: 80px;">
-          <span id="cfg-fs-feed-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
-        </div>
+          <input id="cfg-fs-feed" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 2;">
           <label style="margin:0"><input id="cfg-fw-feed" type="checkbox"> Bold</label>
         </div>
 
         <label>Article List Preview Header</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.25em;">
-          <select id="cfg-ff-art-list-title" class="grow" style="flex: 7;">
+          <select id="cfg-ff-art-list-title" class="grow" style="flex: 8;">
     <optgroup label="System & Generics">
         <option value="system">Default</option>
         <option value="serif">Serif</option>
@@ -413,17 +410,13 @@ fieldset legend {
         <option value="consolas">Consolas</option>
     </optgroup>
           </select>
-<div style="flex: 3; display: flex; align-items: center; gap: 0.25em;">
-          <input id="cfg-fs-art-list-title" type="range" min="10" max="40" style="width: 80px;">
-          <span id="cfg-fs-art-list-title-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
-        </div>
-
+          <input id="cfg-fs-art-list-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 2;">
           <label style="margin:0"><input id="cfg-fw-art-list-title" type="checkbox"> Bold</label>
         </div>
 
         <label>Article List Preview Text</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.25em;">
-          <select id="cfg-ff-art-list-preview" class="grow" style="flex: 7;">
+          <select id="cfg-ff-art-list-preview" class="grow" style="flex: 8;">
     <optgroup label="System & Generics">
         <option value="system">Default</option>
         <option value="serif">Serif</option>
@@ -438,16 +431,13 @@ fieldset legend {
         <option value="consolas">Consolas</option>
     </optgroup>
           </select>
-          <div style="flex: 3; display: flex; align-items: center; gap: 0.25em;">
-          <input id="cfg-fs-art-list-preview" type="range" min="10" max="40" style="width: 80px;">
-          <span id="cfg-fs-art-list-preview-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
-        </div>
+          <input id="cfg-fs-art-list-preview" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 2;">
           <label style="margin:0"><input id="cfg-fw-art-list-preview" type="checkbox"> Bold</label>
         </div>
 
         <label>Article Header</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.25em;">
-          <select id="cfg-ff-art-title" class="grow" style="flex: 7;">
+          <select id="cfg-ff-art-title" class="grow" style="flex: 8;">
     <optgroup label="System & Generics">
         <option value="system">Default</option>
         <option value="serif">Serif</option>
@@ -462,16 +452,13 @@ fieldset legend {
         <option value="consolas">Consolas</option>
     </optgroup>
           </select>
-          <div style="flex: 3; display: flex; align-items: center; gap: 0.25em;">
-          <input id="cfg-fs-art-title" type="range" min="10" max="40" style="width: 80px;">
-          <span id="cfg-fs-art-title-val" class="mono-num" style="font-size:12px; min-width:32px;"></span>
-        </div>
+          <input id="cfg-fs-art-title" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 2;">
           <label style="margin:0"><input id="cfg-fw-art-title" type="checkbox"> Bold</label>
         </div>
 
         <label>Article Body</label>
         <div class="row" style="margin-bottom:0.8em; display: flex; gap: 0.25em;">
-          <select id="cfg-ff-art-body" class="grow" style="flex: 7;">
+          <select id="cfg-ff-art-body" class="grow" style="flex: 8;">
     <optgroup label="System & Generics">
         <option value="system">Default</option>
         <option value="serif">Serif</option>
@@ -486,10 +473,7 @@ fieldset legend {
         <option value="consolas">Consolas</option>
     </optgroup>
           </select>
-          <div style="flex: 3; display: flex; align-items: center; gap: 0.25em;">
-          <input id="cfg-fs-art-body" type="range" min="10" max="40" style="width: 80px;">
-          <span id="cfg-fs-art-body-val" class="mono-num" style="font-size:12px; min-width:20px;"></span>
-        </div>
+          <input id="cfg-fs-art-body" type="number" min="10" max="40" class="grow" placeholder="Size (px)" style="flex: 2;">
           <label style="margin:0"><input id="cfg-fw-art-body" type="checkbox"> Bold</label>
         </div>
                 <label for="cfg-theme-mode">Theme Mode</label>
@@ -624,7 +608,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.24"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.25"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1638,11 +1622,6 @@ function toast(msg){
 }
 
 /* ============================= CONFIG SCREEN LOGIC ============================= */
-  const setSliderVal = (id, val) => {
-    $(id).value = val;
-    $(id + "-val").textContent = val + "px";
-  };
-
 function populateConfigForm(){
   renderAccountsList();
   $("#app-version-label").textContent = "v" + APP_VERSION;
@@ -1669,11 +1648,11 @@ function populateConfigForm(){
   $("#cfg-fw-art-title").checked = CFG.fwArtTitle;
   $("#cfg-fw-art-body").checked = CFG.fwArtBody;
 
-  setSliderVal("#cfg-fs-feed", CFG.fsFeed || 14);
-  setSliderVal("#cfg-fs-art-list-title", CFG.fsArtListTitle || 15);
-  setSliderVal("#cfg-fs-art-list-preview", CFG.fsArtListPreview || 12);
-  setSliderVal("#cfg-fs-art-title", CFG.fsArtTitle || 22);
-  setSliderVal("#cfg-fs-art-body", CFG.fsArtBody || 16);
+  $("#cfg-fs-feed").value = CFG.fsFeed || 14;
+  $("#cfg-fs-art-list-title").value = CFG.fsArtListTitle || 16;
+  $("#cfg-fs-art-list-preview").value = CFG.fsArtListPreview || 12;
+  $("#cfg-fs-art-title").value = CFG.fsArtTitle || 16;
+  $("#cfg-fs-art-body").value = CFG.fsArtBody || 14;
 
   $("#cfg-ff-feed").value = CFG.ffFeed || "georgia";
   $("#cfg-ff-art-list-title").value = CFG.ffArtListTitle || "georgia";
@@ -1885,23 +1864,23 @@ $("#preset-defaults").addEventListener("click", ()=>{
   $("#cfg-preview-lines").value = DEFAULT_CFG.previewLines;
 
   // Typography
-  setSliderVal("#cfg-fs-feed", DEFAULT_CFG.fsFeed);
+  $("#cfg-fs-feed").value = DEFAULT_CFG.fsFeed;
   $("#cfg-fw-feed").checked = DEFAULT_CFG.fwFeed;
   $("#cfg-ff-feed").value = DEFAULT_CFG.ffFeed;
 
-  setSliderVal("#cfg-fs-art-list-title", DEFAULT_CFG.fsArtListTitle);
+  $("#cfg-fs-art-list-title").value = DEFAULT_CFG.fsArtListTitle;
   $("#cfg-fw-art-list-title").checked = DEFAULT_CFG.fwArtListTitle;
   $("#cfg-ff-art-list-title").value = DEFAULT_CFG.ffArtListTitle;
 
-  setSliderVal("#cfg-fs-art-list-preview", DEFAULT_CFG.fsArtListPreview);
+  $("#cfg-fs-art-list-preview").value = DEFAULT_CFG.fsArtListPreview;
   $("#cfg-fw-art-list-preview").checked = DEFAULT_CFG.fwArtListPreview;
   $("#cfg-ff-art-list-preview").value = DEFAULT_CFG.ffArtListPreview;
 
-  setSliderVal("#cfg-fs-art-title", DEFAULT_CFG.fsArtTitle);
+  $("#cfg-fs-art-title").value = DEFAULT_CFG.fsArtTitle;
   $("#cfg-fw-art-title").checked = DEFAULT_CFG.fwArtTitle;
   $("#cfg-ff-art-title").value = DEFAULT_CFG.ffArtTitle;
 
-  setSliderVal("#cfg-fs-art-body", DEFAULT_CFG.fsArtBody);
+  $("#cfg-fs-art-body").value = DEFAULT_CFG.fsArtBody;
   $("#cfg-fw-art-body").checked = DEFAULT_CFG.fwArtBody;
   $("#cfg-ff-art-body").value = DEFAULT_CFG.ffArtBody;
 
@@ -2131,7 +2110,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.fwArtListTitle = $("#cfg-fw-art-list-title").checked;
   CFG.fsArtListPreview = parseInt($("#cfg-fs-art-list-preview").value, 10) || 12;
   CFG.fwArtListPreview = $("#cfg-fw-art-list-preview").checked;
-  CFG.fsArtTitle = parseInt($("#cfg-fs-art-title").value, 10) || 22;
+  CFG.fsArtTitle = parseInt($("#cfg-fs-art-title").value, 10) || 16;
   CFG.fwArtTitle = $("#cfg-fw-art-title").checked;
   CFG.fsArtBody = parseInt($("#cfg-fs-art-body").value, 10) || 16;
   CFG.fwArtBody = $("#cfg-fw-art-body").checked;
