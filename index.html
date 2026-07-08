@@ -608,7 +608,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.25"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.26"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1597,9 +1597,9 @@ $("#btn-back").addEventListener("click", ()=>{
   if(!prev) return;
   lastOpts = prev.opts; showScreen(prev.id, prev.opts);
   if(prev.id === "screen-articles"){
+    updateBulkMarkButtonIcon();
     renderArticleList();
-  }else if(prev.id === "screen-feeds"){
-    refreshCounters().then(renderFeedList);
+  }else if(prev.id === "screen-feeds"){         refreshCounters().then(renderFeedList);
   }
 });
 $("#btn-config").addEventListener("click", ()=>{
@@ -2350,16 +2350,106 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
 })();
 
 /* ============================= ARTICLE LIST SCREEN ============================= */
+/* ============================= ARTICLE LIST SCREEN ============================= */
 let currentFeedUid = null;
 let currentFolderName = null;
 let articleFilter = "unread";
 let artSort = loadSortState(ART_SORT_KEY, {field:"date", dir:"desc"});
 let lastArticleOrder = [];
 
+// Toggles between two bulk actions on the current feed/folder's full article
+// list (not just the currently filtered tab). "read" mode shows an open-eye
+// icon — tapping marks everything read, then flips to "unread" mode (closed
+// eye) for the next tap. Reset to "read" whenever a new feed/folder is opened.
+let bulkMarkMode = "read";
+
+async function getCurrentListEntries(){
+  if(currentFolderName){
+    const feedUids = CFG.selectedFeeds
+      .filter(f => (f.folderName || "Unfiled") === currentFolderName)
+      .map(f => f.id);
+    let entries = [];
+    for(const uid of feedUids){
+      entries = entries.concat(await getEntriesByFeed(uid));
+    }
+    return entries;
+  }
+  return getEntriesByFeed(currentFeedUid);
+}
+
+function buildBulkMarkButton(){
+  const btn = document.createElement("button");
+  btn.className = "icon";
+  btn.setAttribute("aria-label", "Mark all");
+  btn.innerHTML = bulkMarkMode === "read" ? "\u{26AA}" : "\u{1F534}";
+  btn.title = bulkMarkMode === "read" ? "Mark all as read" : "Mark all as unread";
+  btn.addEventListener("click", ()=>bulkMarkAll());
+  return btn;
+}
+
+function updateBulkMarkButtonIcon(){
+  const btn = $("#top-actions button[aria-label='Mark all']");
+  if(!btn) return;
+  btn.innerHTML = bulkMarkMode === "read" ? "\u{26AA}" : "\u{1F534}";
+  btn.title = bulkMarkMode === "read" ? "Mark all as read" : "Mark all as unread";
+}
+
+// Applies a read/unread status to a batch of entries: updates local state via
+// patchEntry (safe single-field writes, no race with other in-flight edits),
+// then pushes the change to the remote server grouped by account so most
+// providers only need one bulk API call rather than one per article.
+async function applyBulkStatus(entries, status){
+  for(const e of entries){
+    e.status = status;
+    await patchEntry(e.id, rec=>{ rec.status = status; });
+  }
+
+  const byAccount = new Map();
+  for(const e of entries){
+    if(!byAccount.has(e.accountId)) byAccount.set(e.accountId, []);
+    byAccount.get(e.accountId).push(e);
+  }
+
+  for(const [accountId, accEntries] of byAccount){
+    const acc = CFG.accounts.find(a => a.id === accountId);
+    if(!acc) continue;
+    if(acc.type === "newsblur" && status === "unread"){
+      // NewsBlur's mark-unread endpoint only accepts a single story per
+      // request, unlike its bulk mark-read endpoint — loop for this case.
+      for(const e of accEntries){
+        try{ await apiMarkStatus(acc, [e.rawId], status, e.rawFeedId); }
+        catch(err){ await enqueueOutbox({type:"mark-status", accountId, rawIds:[e.rawId], rawFeedId:e.rawFeedId, status}); }
+      }
+    }else{
+      const rawIds = accEntries.map(e=>e.rawId);
+      try{ await apiMarkStatus(acc, rawIds, status, accEntries[0].rawFeedId); }
+      catch(err){ await enqueueOutbox({type:"mark-status", accountId, rawIds, rawFeedId:accEntries[0].rawFeedId, status}); }
+    }
+  }
+}
+
+async function bulkMarkAll(){
+  const targetStatus = bulkMarkMode;
+  const listLabel = currentFolderName ? `folder "${currentFolderName}"` : "this feed";
+  if(!confirm(`Mark all articles in ${listLabel} as ${targetStatus}?`)) return;
+
+  const entries = await getCurrentListEntries();
+  if(entries.length === 0){ toast("No articles to update"); return; }
+
+  await applyBulkStatus(entries, targetStatus);
+
+  bulkMarkMode = targetStatus === "read" ? "unread" : "read";
+  updateBulkMarkButtonIcon();
+
+  toast(`Marked ${entries.length} article${entries.length!==1?"s":""} as ${targetStatus}`);
+  renderArticleList();
+}
+
 function openArticleList(feedUid, feedTitle){
   currentFeedUid = feedUid;
   currentFolderName = null;
-  navigate("screen-articles", {title:feedTitle});
+  bulkMarkMode = "read";
+  navigate("screen-articles", {title:feedTitle, actions:[buildBulkMarkButton()]});
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
   renderArticleList();
 }
@@ -2367,7 +2457,8 @@ function openArticleList(feedUid, feedTitle){
 function openArticleListForFolder(folderName){
   currentFeedUid = null;
   currentFolderName = folderName;
-  navigate("screen-articles", {title: "[" + folderName + "]"});
+  bulkMarkMode = "read";
+  navigate("screen-articles", {title: "[" + folderName + "]", actions:[buildBulkMarkButton()]});
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
   renderArticleList();
 }
@@ -2393,18 +2484,7 @@ $("#art-sort-dir").addEventListener("click", ()=>{
 });
 
 async function renderArticleList(){
-  let entries;
-  if(currentFolderName){
-    const feedUids = CFG.selectedFeeds
-      .filter(f => (f.folderName || "Unfiled") === currentFolderName)
-      .map(f => f.id);
-    entries = [];
-    for(const uid of feedUids){
-      entries = entries.concat(await getEntriesByFeed(uid));
-    }
-  }else{
-    entries = await getEntriesByFeed(currentFeedUid);
-  }
+  let entries = await getCurrentListEntries();
   if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
   else if(articleFilter==="read") entries = entries.filter(e=>e.status==="read");
   else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
