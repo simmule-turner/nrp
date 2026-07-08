@@ -182,10 +182,11 @@
   }
 
   /* Account Management */
-  .account-item { display:flex; justify-content:space-between; align-items:center; padding:.5em .7em; background:var(--raised); border:1px solid var(--border); border-radius:3px; margin-bottom:.5em; }
-  .account-item .info { flex:1; }
-  .account-item .info strong { display:block; font-size:14px; }
-  .account-item .info span { font-size:12px; color:var(--muted); }
+  .account-item { display:flex; justify-content:space-between; align-items:center; gap:.6em; padding:.5em .7em; background:var(--raised); border:1px solid var(--border); border-radius:3px; margin-bottom:.5em; }
+  .account-item .info { flex:1; min-width:0; overflow:hidden; }
+  .account-item .info strong { display:block; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .account-item .info span { display:block; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .account-item .actions { display:flex; gap:.3em; flex:0 0 auto; white-space:nowrap; }
 
   #feed-sort-controls select, #art-sort-controls select{
     width:auto; min-width:0; max-width:88px;
@@ -230,6 +231,7 @@ fieldset legend {
       </select>
       <button id="art-sort-dir" class="icon" aria-label="Toggle sort direction">&#x1F447;</button>
     </span>
+    <button id="btn-bulk-mark" class="icon" aria-label="Mark all" disabled>&#9899;</button>
     <button id="btn-top-save" class="icon hidden" aria-label="Save Config">&#128190;</button>
     <button id="btn-config" class="icon" aria-label="Settings">&#128736;</button>
   </div>
@@ -366,6 +368,34 @@ fieldset legend {
           <div id="rl-rd-fields" class="hidden">
             <label for="rl-rd-token">API Token</label>
             <input id="rl-rd-token" type="password">
+            <div class="row between" style="margin-top:1em;">
+              <label style="margin:0;">Send full extracted content (experimental)</label>
+              <input id="rl-rd-send-content" type="checkbox">
+            </div>
+            <p class="muted" style="font-size:11px; margin:.4em 0 0;">
+              Uploads the article content already fetched by NRP (plus any of its images already
+              in NRP's cache) instead of letting Readeck re-fetch and extract the page itself —
+              useful when a site's images need the same login/session as the article and would
+              otherwise fail Readeck's own later fetch. Falls back automatically to sending just
+              the URL and title if the upload fails.
+            </p>
+          </div>
+
+          <hr>
+          <label style="margin-top:0;">API Proxy</label>
+          <div class="row between">
+            <label style="margin:0;">Use proxy for requests to this account</label>
+            <input id="rl-proxy-enabled" type="checkbox">
+          </div>
+          <label for="rl-proxy-url">Proxy URL (prepended to request URL)</label>
+          <input id="rl-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
+          <div class="row between">
+            <label style="margin:0;">Send custom headers</label>
+            <input id="rl-proxy-headers-enabled" type="checkbox">
+          </div>
+          <div id="rl-proxy-headers-list"></div>
+          <div class="row" style="margin-top:.4em;">
+            <button type="button" id="rl-proxy-add-header" class="chip">+ Add header</button>
           </div>
 
           <div class="row wrap" style="margin-top:1em;">
@@ -633,7 +663,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.27"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.29"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -956,7 +986,10 @@ function appLog(type, message, size){
 }
 function recordOversizedImage(url, size){ appLog("oversized", url, size); }
 function recordThumbDebug(msg){ appLog("thumb", msg); }
-function debug(msg){ appLog("debug", msg); }  
+function debug(msg){ appLog("debug", msg); }
+// Failures/warnings from read-it-later sends (Wallabag or Readeck) — shared
+// so both integrations show up under the same "rl" log category in Settings.
+function rlLog(msg){ appLog("rl", msg); }
 
 // Thumbnails are stored in their own IndexedDB object store, keyed by entry id,
 // as small base64 JPEG data URLs. A dedicated store (rather than a field on the
@@ -1328,7 +1361,10 @@ async function processOutbox(){
         if(rlAccount) await rilSaveEntry(rlAccount, item.title, item.content, item.url);
       }
       await tx("outbox","readwrite", store=>store.delete(item.seq));
-    }catch(e){ break; }
+    }catch(e){
+      if(item.type === "rl-save") rlLog(`Outbox retry still failing for ${item.url}: ${e && e.message}`);
+      break;
+    }
   }
 }
 window.addEventListener("online", ()=>{ processOutbox(); });
@@ -1565,10 +1601,14 @@ async function wbEnsureToken(account){
     grant_type:"password", client_id:account.clientId, client_secret:account.clientSecret,
     username:account.username, password:account.password
   });
-  const resp = await fetch(wbBase(account)+"/oauth/v2/token", {
+  const proxied = applyProxy(account, "api", wbBase(account)+"/oauth/v2/token", {
     method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body
   });
-  if(!resp.ok) throw new Error("Wallabag auth failed "+resp.status);
+  const resp = await fetch(proxied.url, proxied.opts);
+  if(!resp.ok){
+    rlLog(`Wallabag auth failed for "${account.name}": status=${resp.status}`);
+    throw new Error("Wallabag auth failed "+resp.status);
+  }
   const data = await resp.json();
   account.accessToken = data.access_token;
   account.refreshToken = data.refresh_token;
@@ -1578,11 +1618,15 @@ async function wbEnsureToken(account){
 }
 async function wbSaveEntry(account, title, content, url){
   const token = await wbEnsureToken(account);
-  const resp = await fetch(wbBase(account)+"/api/entries", {
+  const proxied = applyProxy(account, "api", wbBase(account)+"/api/entries", {
     method:"POST", headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token},
     body:JSON.stringify({url, title, content})
   });
-  if(!resp.ok) throw new Error("Wallabag save failed "+resp.status);
+  const resp = await fetch(proxied.url, proxied.opts);
+  if(!resp.ok){
+    rlLog(`Wallabag save failed for "${account.name}": status=${resp.status}, url=${url}`);
+    throw new Error("Wallabag save failed "+resp.status);
+  }
   return resp.json();
 }
 
@@ -1590,8 +1634,111 @@ async function wbSaveEntry(account, title, content, url){
 // Readeck uses a static, user-generated API token (Settings -> API Tokens in
 // Readeck itself) sent as a Bearer token — no OAuth dance required.
 function rdBase(account){ return (account.url||"").replace(/\/+$/,""); }
+async function rdFetch(account, opts){
+  const proxied = applyProxy(account, "api", rdBase(account)+"/api/bookmarks", opts);
+  return fetch(proxied.url, proxied.opts);
+}
+
+// Assembles a multipart/form-data body from an array of
+// {headers:[[name,value],...], body:string|Blob} parts. Built by hand (Blob
+// concatenation) rather than the browser's FormData API because Readeck's
+// resource-attachment format requires a "Location" header on each resource
+// part, which FormData has no way to set.
+function buildMultipartBody(parts, boundary){
+  const CRLF = "\r\n";
+  const chunks = [];
+  parts.forEach(part=>{
+    let head = `--${boundary}${CRLF}`;
+    part.headers.forEach(([k,v])=>{ head += `${k}: ${v}${CRLF}`; });
+    head += CRLF;
+    chunks.push(head);
+    chunks.push(part.body instanceof Blob ? part.body : String(part.body));
+    chunks.push(CRLF);
+  });
+  chunks.push(`--${boundary}--${CRLF}`);
+  return new Blob(chunks);
+}
+
+// Per Readeck's own API docs (docs/api/bookmarks/doc-create.md,
+// https://codeberg.org/readeck/readeck/issues/106):
+//  - a bare {url, title} JSON POST works for a normal, server-scraped save
+//  - adding an "html" field (JSON or multipart) supplies the page content
+//    directly instead of having Readeck re-fetch/extract it
+//  - attaching extra binary "resource" parts (multipart only), each with a
+//    Content-Disposition of `form-data; name="resource"; filename="_"` and a
+//    `Location` header equal to the resource's own URL, lets images the
+//    referenced HTML points at be supplied too — useful when a site's images
+//    require the same session/referer/auth as the article itself and would
+//    otherwise fail Readeck's own later fetch.
+// rdSaveEntry() tries the richest option first (content + any cached images)
+// and falls back to progressively simpler requests if a step fails, so a
+// Readeck save never just breaks outright.
 async function rdSaveEntry(account, title, content, url){
-  const resp = await fetch(rdBase(account)+"/api/bookmarks", {
+  if(account.sendFullContent !== false && content){
+    try{
+      return await rdSaveWithContent(account, title, content, url);
+    }catch(e){
+      rlLog(`Readeck content upload failed for "${account.name}" (${url}): ${e && e.message}. Falling back to URL-only save.`);
+    }
+  }
+  return rdSaveUrlOnly(account, title, url);
+}
+
+async function rdSaveWithContent(account, title, content, url){
+  const boundary = "NRPReadeck" + Date.now().toString(16) + Math.random().toString(16).slice(2);
+  const parts = [
+    {headers:[["Content-Disposition", 'form-data; name="url"']], body: url},
+    {headers:[["Content-Disposition", 'form-data; name="title"']], body: title || ""},
+    {headers:[
+      ["Content-Disposition", 'form-data; name="resource"; filename="_"'],
+      ["Location", url],
+      ["Content-Type", "text/html; charset=utf-8"]
+    ], body: content}
+  ];
+
+  // Attach any images referenced in the article that we already have cached
+  // locally, so Readeck doesn't need to fetch them itself. This is
+  // best-effort and only uses what's already in NRP's image cache — it
+  // never triggers new network fetches on send, to keep "Send to Readeck"
+  // fast and to avoid duplicating the reader account's own proxy/auth setup.
+  const imgUrls = extractImageUrls(content);
+  let attached = 0;
+  for(const imgUrl of imgUrls){
+    try{
+      const cached = await getCachedAsset(imgUrl);
+      if(cached && cached.blob){
+        parts.push({
+          headers:[
+            ["Content-Disposition", 'form-data; name="resource"; filename="_"'],
+            ["Location", imgUrl],
+            ["Content-Type", cached.blob.type || "application/octet-stream"]
+          ],
+          body: cached.blob
+        });
+        attached++;
+      }
+    }catch(e){ /* skip this image; not fatal to the save */ }
+  }
+  if(imgUrls.length > attached){
+    rlLog(`Readeck save for "${account.name}" (${url}): ${attached}/${imgUrls.length} referenced image(s) were cached and attached; the rest will be fetched by Readeck itself.`);
+  }
+
+  const body = buildMultipartBody(parts, boundary);
+  const resp = await rdFetch(account, {
+    method:"POST",
+    headers:{
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      "Accept":"application/json",
+      "Authorization":"Bearer "+account.apiToken
+    },
+    body
+  });
+  if(!resp.ok) throw new Error("status="+resp.status);
+  try{ return await resp.json(); }catch(e){ return null; }
+}
+
+async function rdSaveUrlOnly(account, title, url){
+  const resp = await rdFetch(account, {
     method:"POST",
     headers:{
       "Content-Type":"application/json",
@@ -1600,7 +1747,10 @@ async function rdSaveEntry(account, title, content, url){
     },
     body: JSON.stringify({url, title})
   });
-  if(!resp.ok) throw new Error("Readeck save failed "+resp.status);
+  if(!resp.ok){
+    rlLog(`Readeck save failed for "${account.name}": status=${resp.status}, url=${url}`);
+    throw new Error("Readeck save failed "+resp.status);
+  }
   try{ return await resp.json(); }catch(e){ return null; }
 }
 
@@ -1652,6 +1802,7 @@ function showScreen(id, opts){
   $("#btn-config").classList.toggle("hidden", id === "screen-config");
   $("#feed-sort-controls").classList.toggle("hidden", id !== "screen-feeds");
   $("#art-sort-controls").classList.toggle("hidden", id !== "screen-articles");
+  updateBulkMarkButton();
 
   $("#top-title").textContent = opts.title || "NRP";
   $("#top-actions").innerHTML = "";
@@ -1670,7 +1821,6 @@ $("#btn-back").addEventListener("click", ()=>{
   if(!prev) return;
   lastOpts = prev.opts; showScreen(prev.id, prev.opts);
   if(prev.id === "screen-articles"){
-    updateBulkMarkButtonIcon();
     renderArticleList();
   }else if(prev.id === "screen-feeds"){         refreshCounters().then(renderFeedList);
   }
@@ -1756,7 +1906,7 @@ function renderAccountsList() {
         <strong>${escapeHtml(acc.name)}</strong>
         <span>${escapeHtml(acc.type)} &middot; ${escapeHtml(acc.url)}</span>
       </div>
-      <div>
+      <div class="actions">
         <button class="icon" title="Edit" onclick="editAccount('${acc.id}')">&#9998;</button>
         <button class="icon danger" title="Remove" onclick="deleteAccount('${acc.id}')">&#128465;</button>
       </div>
@@ -1825,6 +1975,7 @@ function collectProxyHeaders(containerId){
 }
 $("#acc-api-proxy-add-header").addEventListener("click", ()=>createHeaderRow("acc-api-proxy-headers-list","",""));
 $("#acc-nonapi-proxy-add-header").addEventListener("click", ()=>createHeaderRow("acc-nonapi-proxy-headers-list","",""));
+$("#rl-proxy-add-header").addEventListener("click", ()=>createHeaderRow("rl-proxy-headers-list","",""));
 $("#acc-type").addEventListener("change", (e) => {
   const t = e.target.value;
   $("#acc-mf-fields").classList.toggle("hidden", t !== "miniflux");
@@ -1916,7 +2067,7 @@ function renderRlAccountsList() {
         <strong>${escapeHtml(acc.name)}</strong>
         <span>${escapeHtml(typeLabel)} &middot; ${escapeHtml(acc.url)}</span>
       </div>
-      <div>
+      <div class="actions">
         <button class="icon" title="Edit" onclick="editRlAccount('${acc.id}')">&#9998;</button>
         <button class="icon danger" title="Remove" onclick="deleteRlAccount('${acc.id}')">&#128465;</button>
       </div>
@@ -1935,6 +2086,11 @@ $("#btn-add-rl-account").addEventListener("click", () => {
   $("#rl-wb-username").value = "";
   $("#rl-wb-password").value = "";
   $("#rl-rd-token").value = "";
+  $("#rl-rd-send-content").checked = true;
+  $("#rl-proxy-enabled").checked = false;
+  $("#rl-proxy-url").value = "";
+  $("#rl-proxy-headers-enabled").checked = false;
+  renderProxyHeaderRows("rl-proxy-headers-list", []);
   $("#rl-type").dispatchEvent(new Event("change"));
   $("#rl-account-form").classList.remove("hidden");
   $("#btn-add-rl-account").classList.add("hidden");
@@ -1965,7 +2121,11 @@ $("#btn-save-rl-account").addEventListener("click", () => {
     url: url,
     accessToken: existing.accessToken || null,
     refreshToken: existing.refreshToken || null,
-    tokenExpiry: existing.tokenExpiry || 0
+    tokenExpiry: existing.tokenExpiry || 0,
+    apiProxyEnabled: $("#rl-proxy-enabled").checked,
+    apiProxyUrl: $("#rl-proxy-url").value.trim(),
+    apiProxyHeadersEnabled: $("#rl-proxy-headers-enabled").checked,
+    apiProxyHeaders: collectProxyHeaders("rl-proxy-headers-list")
   };
   if(type === "wallabag"){
     acc.clientId = $("#rl-wb-client-id").value.trim();
@@ -1974,6 +2134,7 @@ $("#btn-save-rl-account").addEventListener("click", () => {
     acc.password = $("#rl-wb-password").value;
   }else{
     acc.apiToken = $("#rl-rd-token").value.trim();
+    acc.sendFullContent = $("#rl-rd-send-content").checked;
   }
 
   CFG.readItLaterAccounts = CFG.readItLaterAccounts || [];
@@ -1998,6 +2159,11 @@ window.editRlAccount = (id) => {
   $("#rl-wb-username").value = acc.username || "";
   $("#rl-wb-password").value = acc.password || "";
   $("#rl-rd-token").value = acc.apiToken || "";
+  $("#rl-rd-send-content").checked = acc.sendFullContent !== false;
+  $("#rl-proxy-enabled").checked = !!acc.apiProxyEnabled;
+  $("#rl-proxy-url").value = acc.apiProxyUrl || "";
+  $("#rl-proxy-headers-enabled").checked = !!acc.apiProxyHeadersEnabled;
+  renderProxyHeaderRows("rl-proxy-headers-list", acc.apiProxyHeaders || []);
   $("#rl-type").dispatchEvent(new Event("change"));
   $("#rl-account-form").classList.remove("hidden");
   $("#btn-add-rl-account").classList.add("hidden");
@@ -2533,11 +2699,15 @@ let articleFilter = "unread";
 let artSort = loadSortState(ART_SORT_KEY, {field:"date", dir:"desc"});
 let lastArticleOrder = [];
 
-// Toggles between two bulk actions on the current feed/folder's full article
-// list (not just the currently filtered tab). "read" mode shows an open-eye
-// icon — tapping marks everything read, then flips to "unread" mode (closed
-// eye) for the next tap. Reset to "read" whenever a new feed/folder is opened.
-let bulkMarkMode = "read";
+// The bulk mark button lives permanently in the topbar next to Settings
+// (see #btn-bulk-mark). Its action always mirrors the current tab: on the
+// "read" tab it marks the read entries in that list unread; on any other
+// tab (unread/starred) it marks the shown entries read. It's disabled
+// whenever there's nothing in the current tab to act on, or when not on the
+// article list screen at all.
+function currentBulkMode(){
+  return articleFilter === "read" ? "unread" : "read";
+}
 
 async function getCurrentListEntries(){
   if(currentFolderName){
@@ -2553,22 +2723,33 @@ async function getCurrentListEntries(){
   return getEntriesByFeed(currentFeedUid);
 }
 
-function buildBulkMarkButton(){
-  const btn = document.createElement("button");
-  btn.className = "icon";
-  btn.setAttribute("aria-label", "Mark all");
-  btn.innerHTML = bulkMarkMode === "read" ? "\u{26AA}" : "\u{1F534}";
-  btn.title = bulkMarkMode === "read" ? "Mark all as read" : "Mark all as unread";
-  btn.addEventListener("click", ()=>bulkMarkAll());
-  return btn;
+async function getFilteredListEntries(){
+  let entries = await getCurrentListEntries();
+  if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
+  else if(articleFilter==="read") entries = entries.filter(e=>e.status==="read");
+  else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
+  return entries;
 }
 
-function updateBulkMarkButtonIcon(){
-  const btn = $("#top-actions button[aria-label='Mark all']");
+function updateBulkMarkButton(){
+  const btn = $("#btn-bulk-mark");
   if(!btn) return;
-  btn.innerHTML = bulkMarkMode === "read" ? "\u{26AA}" : "\u{1F534}";
-  btn.title = bulkMarkMode === "read" ? "Mark all as read" : "Mark all as unread";
+  if(currentScreen !== "screen-articles"){
+    btn.disabled = true;
+    btn.style.opacity = "0.35";
+    btn.style.cursor = "default";
+    btn.title = "Mark all";
+    return;
+  }
+  const mode = currentBulkMode();
+  btn.innerHTML = mode === "read" ? "\u{26AA}" : "\u{1F534}";
+  btn.title = mode === "read" ? "Mark all as read" : "Mark all as unread";
+  const disabled = lastArticleOrder.length === 0;
+  btn.disabled = disabled;
+  btn.style.opacity = disabled ? "0.35" : "1";
+  btn.style.cursor = disabled ? "default" : "pointer";
 }
+$("#btn-bulk-mark").addEventListener("click", ()=>bulkMarkAll());
 
 // Applies a read/unread status to a batch of entries: updates local state via
 // patchEntry (safe single-field writes, no race with other in-flight edits),
@@ -2605,17 +2786,15 @@ async function applyBulkStatus(entries, status){
 }
 
 async function bulkMarkAll(){
-  const targetStatus = bulkMarkMode;
-  const listLabel = currentFolderName ? `folder "${currentFolderName}"` : "this feed";
-  if(!confirm(`Mark all articles in ${listLabel} as ${targetStatus}?`)) return;
+  if($("#btn-bulk-mark").disabled) return;
+  const targetStatus = currentBulkMode();
+  const entries = await getFilteredListEntries();
+  if(entries.length === 0){ toast("No articles to update"); updateBulkMarkButton(); return; }
 
-  const entries = await getCurrentListEntries();
-  if(entries.length === 0){ toast("No articles to update"); return; }
+  const listLabel = currentFolderName ? `folder "${currentFolderName}"` : "this feed";
+  if(!confirm(`Mark ${entries.length} article${entries.length!==1?"s":""} in ${listLabel} as ${targetStatus}?`)) return;
 
   await applyBulkStatus(entries, targetStatus);
-
-  bulkMarkMode = targetStatus === "read" ? "unread" : "read";
-  updateBulkMarkButtonIcon();
 
   toast(`Marked ${entries.length} article${entries.length!==1?"s":""} as ${targetStatus}`);
   renderArticleList();
@@ -2624,8 +2803,7 @@ async function bulkMarkAll(){
 function openArticleList(feedUid, feedTitle){
   currentFeedUid = feedUid;
   currentFolderName = null;
-  bulkMarkMode = "read";
-  navigate("screen-articles", {title:feedTitle, actions:[buildBulkMarkButton()]});
+  navigate("screen-articles", {title:feedTitle});
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
   renderArticleList();
 }
@@ -2633,8 +2811,7 @@ function openArticleList(feedUid, feedTitle){
 function openArticleListForFolder(folderName){
   currentFeedUid = null;
   currentFolderName = folderName;
-  bulkMarkMode = "read";
-  navigate("screen-articles", {title: "[" + folderName + "]", actions:[buildBulkMarkButton()]});
+  navigate("screen-articles", {title: "[" + folderName + "]"});
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
   renderArticleList();
 }
@@ -2660,10 +2837,7 @@ $("#art-sort-dir").addEventListener("click", ()=>{
 });
 
 async function renderArticleList(){
-  let entries = await getCurrentListEntries();
-  if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
-  else if(articleFilter==="read") entries = entries.filter(e=>e.status==="read");
-  else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
+  let entries = await getFilteredListEntries();
   entries.sort((a,b)=>{
     let cmp = artSort.field==="date"
       ? new Date(a.publishedAt) - new Date(b.publishedAt)
@@ -2671,6 +2845,7 @@ async function renderArticleList(){
     return artSort.dir==="asc" ? cmp : -cmp;
   });
   lastArticleOrder = entries.map(e=>e.id);
+  updateBulkMarkButton();
   const container = $("#article-list"); container.innerHTML = "";
   if(entries.length===0){
     container.innerHTML = '<div class="empty"><div class="big">Nothing here</div>Pull to refresh on the feed list to fetch new items.</div>';
@@ -2919,6 +3094,7 @@ async function sendToReadItLater(accountId){
     await rilSaveEntry(account, currentEntry.title, currentEntry.content, currentEntry.url);
     toast("Saved to " + label);
   }catch(e){
+    rlLog(`Send to "${label}" failed for ${currentEntry.url}, queued for retry: ${e && e.message}`);
     await enqueueOutbox({type:"rl-save", accountId: account.id, title:currentEntry.title, content:currentEntry.content, url:currentEntry.url});
     toast("Queued for " + label);
   }
