@@ -337,17 +337,42 @@ fieldset legend {
         </div>
       </fieldset>
       <fieldset>
-        <legend>Wallabag</legend>
-        <label for="cfg-wb-url">Base URL</label>
-        <input id="cfg-wb-url" type="url" placeholder="https://wallabag.example.com">
-        <label for="cfg-wb-client-id">Client ID</label>
-        <input id="cfg-wb-client-id" type="text">
-        <label for="cfg-wb-client-secret">Client secret</label>
-        <input id="cfg-wb-client-secret" type="password">
-        <label for="cfg-wb-username">Username</label>
-        <input id="cfg-wb-username" type="text">
-        <label for="cfg-wb-password">Password</label>
-        <input id="cfg-wb-password" type="password">
+        <legend>Read-it-later Accounts</legend>
+        <div id="cfg-rl-accounts-list"></div>
+        <button id="btn-add-rl-account" class="chip" style="margin-top:.4em;">+ Add Account</button>
+
+        <div id="rl-account-form" class="hidden" style="margin-top:1.2em; padding-top:1em; border-top:1px solid var(--border);">
+          <input type="hidden" id="rl-form-id">
+          <label for="rl-type">Type</label>
+          <select id="rl-type">
+            <option value="wallabag">Wallabag</option>
+            <option value="readeck">Readeck</option>
+          </select>
+          <label for="rl-name">Account Name</label>
+          <input id="rl-name" type="text" placeholder="e.g. My Wallabag">
+          <label for="rl-url">Base URL</label>
+          <input id="rl-url" type="url" placeholder="https://...">
+
+          <div id="rl-wb-fields">
+            <label for="rl-wb-client-id">Client ID</label>
+            <input id="rl-wb-client-id" type="text">
+            <label for="rl-wb-client-secret">Client secret</label>
+            <input id="rl-wb-client-secret" type="password">
+            <label for="rl-wb-username">Username</label>
+            <input id="rl-wb-username" type="text">
+            <label for="rl-wb-password">Password</label>
+            <input id="rl-wb-password" type="password">
+          </div>
+          <div id="rl-rd-fields" class="hidden">
+            <label for="rl-rd-token">API Token</label>
+            <input id="rl-rd-token" type="password">
+          </div>
+
+          <div class="row wrap" style="margin-top:1em;">
+            <button id="btn-save-rl-account" class="primary grow">Save Account</button>
+            <button id="btn-cancel-rl-account" class="grow">Cancel</button>
+          </div>
+        </div>
       </fieldset>
 
       <fieldset>
@@ -608,13 +633,11 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.26"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.27"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
-  wallabagUrl:"", wallabagClientId:"", wallabagClientSecret:"",
-  wallabagUsername:"", wallabagPassword:"",
-  wallabagAccessToken:null, wallabagRefreshToken:null, wallabagTokenExpiry:0,
+  readItLaterAccounts: [],
   imageCacheMode:"on-read",
   themeMode:"system",
   lightBg:"#F5F6F3", lightFg:"#1B1D1F",
@@ -671,6 +694,27 @@ function loadConfig(){
       }
       delete parsed.minifluxUrl; delete parsed.minifluxToken; delete parsed.minifluxMaxItems;
     }
+
+    // Migration for moving from a single hardcoded Wallabag config to the
+    // multi-account readItLaterAccounts array (Wallabag + Readeck, etc.)
+    if(parsed.wallabagUrl && (!parsed.readItLaterAccounts || parsed.readItLaterAccounts.length === 0)) {
+      parsed.readItLaterAccounts = [{
+        id: "default_wb",
+        type: "wallabag",
+        name: "Wallabag",
+        url: parsed.wallabagUrl,
+        clientId: parsed.wallabagClientId,
+        clientSecret: parsed.wallabagClientSecret,
+        username: parsed.wallabagUsername,
+        password: parsed.wallabagPassword,
+        accessToken: parsed.wallabagAccessToken || null,
+        refreshToken: parsed.wallabagRefreshToken || null,
+        tokenExpiry: parsed.wallabagTokenExpiry || 0
+      }];
+    }
+    delete parsed.wallabagUrl; delete parsed.wallabagClientId; delete parsed.wallabagClientSecret;
+    delete parsed.wallabagUsername; delete parsed.wallabagPassword; delete parsed.wallabagAccessToken;
+    delete parsed.wallabagRefreshToken; delete parsed.wallabagTokenExpiry;
 
     return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
@@ -1279,8 +1323,9 @@ async function processOutbox(){
         await apiMarkStatus(account, item.rawIds, item.status, item.rawFeedId);
       }else if(item.type === "toggle-star" && account){
         await apiToggleBookmark(account, item.rawId, item.rawFeedId, item.isStarred);
-      }else if(item.type === "wallabag-save"){
-        await wbSaveEntry(item.title, item.content, item.url);
+      }else if(item.type === "rl-save"){
+        const rlAccount = (CFG.readItLaterAccounts||[]).find(a => a.id === item.accountId);
+        if(rlAccount) await rilSaveEntry(rlAccount, item.title, item.content, item.url);
       }
       await tx("outbox","readwrite", store=>store.delete(item.seq));
     }catch(e){ break; }
@@ -1502,33 +1547,61 @@ async function nbToggleBookmark(account, entryId, rawFeedId, isStarred){
     });
 }
 
+/* ============================= READ-IT-LATER API ABSTRACTIONS ============================= */
+// Two supported types: "wallabag" (OAuth password grant) and "readeck"
+// (static API token). Both are managed as accounts in CFG.readItLaterAccounts,
+// analogous to the reader accounts in CFG.accounts.
+async function rilSaveEntry(account, title, content, url){
+  if(account.type === "wallabag") return wbSaveEntry(account, title, content, url);
+  if(account.type === "readeck") return rdSaveEntry(account, title, content, url);
+  throw new Error("Unknown read-it-later account type");
+}
+
 /* ============================= WALLABAG API ============================= */
-function wbBase(){ return (CFG.wallabagUrl||"").replace(/\/+$/,""); }
-async function wbEnsureToken(){
-  if(CFG.wallabagAccessToken && Date.now() < CFG.wallabagTokenExpiry - 30000) return CFG.wallabagAccessToken;
+function wbBase(account){ return (account.url||"").replace(/\/+$/,""); }
+async function wbEnsureToken(account){
+  if(account.accessToken && Date.now() < account.tokenExpiry - 30000) return account.accessToken;
   const body = new URLSearchParams({
-    grant_type:"password", client_id:CFG.wallabagClientId, client_secret:CFG.wallabagClientSecret,
-    username:CFG.wallabagUsername, password:CFG.wallabagPassword
+    grant_type:"password", client_id:account.clientId, client_secret:account.clientSecret,
+    username:account.username, password:account.password
   });
-  const resp = await fetch(wbBase()+"/oauth/v2/token", {
+  const resp = await fetch(wbBase(account)+"/oauth/v2/token", {
     method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body
   });
   if(!resp.ok) throw new Error("Wallabag auth failed "+resp.status);
   const data = await resp.json();
-  CFG.wallabagAccessToken = data.access_token;
-  CFG.wallabagRefreshToken = data.refresh_token;
-  CFG.wallabagTokenExpiry = Date.now() + (data.expires_in||3600)*1000;
+  account.accessToken = data.access_token;
+  account.refreshToken = data.refresh_token;
+  account.tokenExpiry = Date.now() + (data.expires_in||3600)*1000;
   saveConfig(CFG);
-  return CFG.wallabagAccessToken;
+  return account.accessToken;
 }
-async function wbSaveEntry(title, content, url){
-  const token = await wbEnsureToken();
-  const resp = await fetch(wbBase()+"/api/entries", {
+async function wbSaveEntry(account, title, content, url){
+  const token = await wbEnsureToken(account);
+  const resp = await fetch(wbBase(account)+"/api/entries", {
     method:"POST", headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token},
     body:JSON.stringify({url, title, content})
   });
   if(!resp.ok) throw new Error("Wallabag save failed "+resp.status);
   return resp.json();
+}
+
+/* ============================= READECK API ============================= */
+// Readeck uses a static, user-generated API token (Settings -> API Tokens in
+// Readeck itself) sent as a Bearer token — no OAuth dance required.
+function rdBase(account){ return (account.url||"").replace(/\/+$/,""); }
+async function rdSaveEntry(account, title, content, url){
+  const resp = await fetch(rdBase(account)+"/api/bookmarks", {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Accept":"application/json",
+      "Authorization":"Bearer "+account.apiToken
+    },
+    body: JSON.stringify({url, title})
+  });
+  if(!resp.ok) throw new Error("Readeck save failed "+resp.status);
+  try{ return await resp.json(); }catch(e){ return null; }
 }
 
 /* ============================= HTML SANITIZE ============================= */
@@ -1624,12 +1697,8 @@ function toast(msg){
 /* ============================= CONFIG SCREEN LOGIC ============================= */
 function populateConfigForm(){
   renderAccountsList();
+  renderRlAccountsList();
   $("#app-version-label").textContent = "v" + APP_VERSION;
-  $("#cfg-wb-url").value = CFG.wallabagUrl;
-  $("#cfg-wb-client-id").value = CFG.wallabagClientId;
-  $("#cfg-wb-client-secret").value = CFG.wallabagClientSecret;
-  $("#cfg-wb-username").value = CFG.wallabagUsername;
-  $("#cfg-wb-password").value = CFG.wallabagPassword;
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
 
   $("#cfg-theme-mode").value = CFG.themeMode;
@@ -1827,6 +1896,118 @@ window.deleteAccount = async (id) => {
   feedPickerChoices = null;
 
   for(const f of toRemove) await removeFeed(f.id);
+  toast("Account removed");
+};
+
+/* Read-it-later Accounts Management UI */
+function renderRlAccountsList() {
+  const list = $("#cfg-rl-accounts-list");
+  list.innerHTML = "";
+  if(!CFG.readItLaterAccounts || CFG.readItLaterAccounts.length === 0) {
+    list.innerHTML = `<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">No accounts</div></div>`;
+    return;
+  }
+  CFG.readItLaterAccounts.forEach(acc => {
+    const typeLabel = acc.type === "wallabag" ? "Wallabag" : "Readeck";
+    const row = document.createElement("div");
+    row.className = "account-item";
+    row.innerHTML = `
+      <div class="info">
+        <strong>${escapeHtml(acc.name)}</strong>
+        <span>${escapeHtml(typeLabel)} &middot; ${escapeHtml(acc.url)}</span>
+      </div>
+      <div>
+        <button class="icon" title="Edit" onclick="editRlAccount('${acc.id}')">&#9998;</button>
+        <button class="icon danger" title="Remove" onclick="deleteRlAccount('${acc.id}')">&#128465;</button>
+      </div>
+    `;
+    list.appendChild(row);
+  });
+}
+
+$("#btn-add-rl-account").addEventListener("click", () => {
+  $("#rl-form-id").value = "";
+  $("#rl-type").value = "wallabag";
+  $("#rl-name").value = "";
+  $("#rl-url").value = "";
+  $("#rl-wb-client-id").value = "";
+  $("#rl-wb-client-secret").value = "";
+  $("#rl-wb-username").value = "";
+  $("#rl-wb-password").value = "";
+  $("#rl-rd-token").value = "";
+  $("#rl-type").dispatchEvent(new Event("change"));
+  $("#rl-account-form").classList.remove("hidden");
+  $("#btn-add-rl-account").classList.add("hidden");
+});
+
+$("#btn-cancel-rl-account").addEventListener("click", () => {
+  $("#rl-account-form").classList.add("hidden");
+  $("#btn-add-rl-account").classList.remove("hidden");
+});
+
+$("#rl-type").addEventListener("change", (e) => {
+  const t = e.target.value;
+  $("#rl-wb-fields").classList.toggle("hidden", t !== "wallabag");
+  $("#rl-rd-fields").classList.toggle("hidden", t !== "readeck");
+});
+
+$("#btn-save-rl-account").addEventListener("click", () => {
+  const id = $("#rl-form-id").value || ("rl_" + Date.now());
+  const type = $("#rl-type").value;
+  const existing = (CFG.readItLaterAccounts||[]).find(a => a.id === id) || {};
+  const url = $("#rl-url").value.trim();
+  if(!url){ toast("Base URL is required"); return; }
+
+  const acc = {
+    id: id,
+    type: type,
+    name: $("#rl-name").value.trim() || (type === "wallabag" ? "Wallabag" : "Readeck"),
+    url: url,
+    accessToken: existing.accessToken || null,
+    refreshToken: existing.refreshToken || null,
+    tokenExpiry: existing.tokenExpiry || 0
+  };
+  if(type === "wallabag"){
+    acc.clientId = $("#rl-wb-client-id").value.trim();
+    acc.clientSecret = $("#rl-wb-client-secret").value.trim();
+    acc.username = $("#rl-wb-username").value.trim();
+    acc.password = $("#rl-wb-password").value;
+  }else{
+    acc.apiToken = $("#rl-rd-token").value.trim();
+  }
+
+  CFG.readItLaterAccounts = CFG.readItLaterAccounts || [];
+  const existingIdx = CFG.readItLaterAccounts.findIndex(a => a.id === id);
+  if(existingIdx >= 0) CFG.readItLaterAccounts[existingIdx] = acc;
+  else CFG.readItLaterAccounts.push(acc);
+
+  saveConfig(CFG);
+  renderRlAccountsList();
+  $("#btn-cancel-rl-account").click();
+});
+
+window.editRlAccount = (id) => {
+  const acc = (CFG.readItLaterAccounts||[]).find(a => a.id === id);
+  if(!acc) return;
+  $("#rl-form-id").value = acc.id;
+  $("#rl-type").value = acc.type;
+  $("#rl-name").value = acc.name;
+  $("#rl-url").value = acc.url;
+  $("#rl-wb-client-id").value = acc.clientId || "";
+  $("#rl-wb-client-secret").value = acc.clientSecret || "";
+  $("#rl-wb-username").value = acc.username || "";
+  $("#rl-wb-password").value = acc.password || "";
+  $("#rl-rd-token").value = acc.apiToken || "";
+  $("#rl-type").dispatchEvent(new Event("change"));
+  $("#rl-account-form").classList.remove("hidden");
+  $("#btn-add-rl-account").classList.add("hidden");
+};
+
+window.deleteRlAccount = (id) => {
+  if(!confirm("Remove this read-it-later account?")) return;
+  CFG.readItLaterAccounts = (CFG.readItLaterAccounts||[]).filter(a => a.id !== id);
+  saveConfig(CFG);
+  renderRlAccountsList();
   toast("Account removed");
 };
 
@@ -2092,11 +2273,6 @@ $("#file-import-cfg").addEventListener("change", e=>{
 });
 
 $("#btn-save-config").addEventListener("click", async ()=>{
-  CFG.wallabagUrl = $("#cfg-wb-url").value.trim();
-  CFG.wallabagClientId = $("#cfg-wb-client-id").value.trim();
-  CFG.wallabagClientSecret = $("#cfg-wb-client-secret").value.trim();
-  CFG.wallabagUsername = $("#cfg-wb-username").value.trim();
-  CFG.wallabagPassword = $("#cfg-wb-password").value;
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
 
   CFG.themeMode = $("#cfg-theme-mode").value;
@@ -2573,6 +2749,40 @@ function findLinkTarget(contentDiv, entry){
   return entry.enclosureUrl || null;
 }
 
+/* Read-it-later account picker menu (used when more than one account is
+   configured, so the user chooses a destination at send time). */
+function showRilAccountMenu(accounts, anchorEl){
+  const existing = document.getElementById("ril-account-menu");
+  if(existing) existing.remove();
+
+  const menu = document.createElement("div");
+  menu.id = "ril-account-menu";
+  menu.style.cssText = "position:fixed; z-index:100; background:var(--bg); border:1px solid var(--border); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.3); min-width:170px; overflow:hidden;";
+
+  const rect = anchorEl ? anchorEl.getBoundingClientRect() : {bottom:56, right:window.innerWidth-10};
+  const top = Math.min(rect.bottom + 4, window.innerHeight - 60);
+  const right = Math.max(window.innerWidth - rect.right, 8);
+  menu.style.top = top + "px";
+  menu.style.right = right + "px";
+
+  accounts.forEach(acc=>{
+    const item = document.createElement("button");
+    const typeLabel = acc.type === "wallabag" ? "Wallabag" : "Readeck";
+    item.textContent = acc.name || typeLabel;
+    item.title = typeLabel;
+    item.style.cssText = "display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:.8em 1em; min-height:auto; font-weight:500;";
+    item.addEventListener("click", ()=>{ menu.remove(); sendToReadItLater(acc.id); });
+    menu.appendChild(item);
+  });
+
+  document.body.appendChild(menu);
+  setTimeout(()=>{
+    document.addEventListener("click", function closeMenu(ev){
+      if(!menu.contains(ev.target)){ menu.remove(); document.removeEventListener("click", closeMenu); }
+    });
+  }, 0);
+}
+
 async function openArticle(entryId, opts){
   opts = opts || {};
   const entry = await getEntry(entryId);
@@ -2588,9 +2798,23 @@ async function openArticle(entryId, opts){
   unreadBtn.className = "icon"; unreadBtn.title = "Mark unread"; unreadBtn.textContent = "\u{1F648}";
   unreadBtn.addEventListener("click", ()=>markUnread());
 
+  const rlAccounts = CFG.readItLaterAccounts || [];
   const wbBtn = document.createElement("button");
-  wbBtn.className = "icon"; wbBtn.title = "Send to Wallabag"; wbBtn.textContent = "\u{1F4E4}";
-  wbBtn.addEventListener("click", ()=>sendToWallabag());
+  wbBtn.className = "icon"; wbBtn.textContent = "\u{1F4E4}";
+  if(rlAccounts.length === 0){
+    wbBtn.title = "No read-it-later account configured";
+    wbBtn.disabled = true;
+    wbBtn.style.opacity = "0.4";
+    wbBtn.style.cursor = "default";
+  }else if(rlAccounts.length === 1){
+    const acc = rlAccounts[0];
+    const typeLabel = acc.type === "wallabag" ? "Wallabag" : "Readeck";
+    wbBtn.title = "Send to " + (acc.name || typeLabel);
+    wbBtn.addEventListener("click", ()=>sendToReadItLater(acc.id));
+  }else{
+    wbBtn.title = "Send to\u2026";
+    wbBtn.addEventListener("click", (ev)=>showRilAccountMenu(rlAccounts, ev.currentTarget));
+  }
 
   const nextBtn = document.createElement("button");
   nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}";
@@ -2673,12 +2897,31 @@ async function toggleStar(){
   const starBtn = $("#top-actions button[aria-label='Star']");
   if(starBtn) starBtn.innerHTML = currentEntry.starred ? "\u2B50" : "\u2606";
 }
-async function sendToWallabag(){
+async function sendToReadItLater(accountId){
   if(!currentEntry) return;
-  if(!CFG.wallabagUrl || !CFG.wallabagUsername){ toast("Wallabag not configured"); return; }
-  toast("Sending to Wallabag...");
-  try{ await wbSaveEntry(currentEntry.title, currentEntry.content, currentEntry.url); toast("Saved to Wallabag"); }
-  catch(e){ await enqueueOutbox({type:"wallabag-save", title:currentEntry.title, content:currentEntry.content, url:currentEntry.url}); toast("Queued for Wallabag"); }
+  const accounts = CFG.readItLaterAccounts || [];
+  if(accounts.length === 0){ toast("No read-it-later account configured"); return; }
+
+  let account;
+  if(accountId){
+    account = accounts.find(a => a.id === accountId);
+  }else if(accounts.length === 1){
+    account = accounts[0];
+  }else{
+    showRilAccountMenu(accounts);
+    return;
+  }
+  if(!account) return;
+
+  const label = account.name || (account.type === "wallabag" ? "Wallabag" : "Readeck");
+  toast(`Sending to ${label}...`);
+  try{
+    await rilSaveEntry(account, currentEntry.title, currentEntry.content, currentEntry.url);
+    toast("Saved to " + label);
+  }catch(e){
+    await enqueueOutbox({type:"rl-save", accountId: account.id, title:currentEntry.title, content:currentEntry.content, url:currentEntry.url});
+    toast("Queued for " + label);
+  }
 }
 
 /* ============================= STARTUP ============================= */
