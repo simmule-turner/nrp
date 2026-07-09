@@ -168,6 +168,13 @@
   }
   .toast.show{ opacity:1; }
 
+  .bg-task-indicator{
+    position:fixed; left:50%; bottom:3.2em; transform:translateX(-50%);
+    background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px;
+    font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;
+  }
+  body.toolbar-bottom .bg-task-indicator{ bottom:6.5em; }
+
   /* Toolbar placement config */
   body.toolbar-bottom .topbar {
     order: 2;
@@ -219,7 +226,7 @@ fieldset legend {
 </head>
 <body>
 
-  <div id="bg-task-indicator" class="hidden" style="position:fixed; top:8px; left:50%; transform:translateX(-50%); background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px; font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;">Syncing...</div>
+  <div id="bg-task-indicator" class="bg-task-indicator hidden">Syncing...</div>
 
   <div class="topbar">
     <button id="btn-back" class="icon hidden" aria-label="Back">&#128072;</button>
@@ -671,7 +678,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.36"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.37"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1560,11 +1567,25 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds){
             break;
         }
         const pageStories = res.stories || [];
-        if(pageStories.length === 0) break; // no more unread stories left in this feed
+        // Per NewsBlur's own API docs: don't assume an empty (or partial)
+        // stories list means there's nothing left to page through — hidden
+        // (thumbs-downed) stories are excluded from the list but still
+        // occupy pagination slots, so a page can look empty while more
+        // genuinely-unread stories exist further in. Only stop once both
+        // the visible list AND hidden_stories_count are exhausted.
+        const hiddenCount = res.hidden_stories_count || 0;
+        debug(`NewsBlur check-pass: feed=${feedId} page ${page} returned ${pageStories.length} stories, hidden_stories_count=${hiddenCount}`);
+        if(pageStories.length === 0 && hiddenCount === 0) break; // genuinely done
+
         const newOnPage = pageStories.filter(s => !knownRawIds.has(s.story_hash));
-        if(newOnPage.length === 0) break; // whole page already known — stop here
-        neededPages.push(page);
-        newCount += newOnPage.length;
+        if(newOnPage.length > 0){
+            neededPages.push(page);
+            newCount += newOnPage.length;
+        }else if(hiddenCount === 0){
+            break; // this page's visible stories are all already known, and nothing hidden beyond it — stop
+        }
+        // else: nothing new on this page, but hidden_stories_count says
+        // there's more beyond it — keep paging.
     }
 
     if(neededPages.length === 0) return [];
@@ -1583,6 +1604,7 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds){
         stories = stories.concat(freshStories);
     }
     stories = stories.slice(0, maxNeeded);
+    debug(`NewsBlur sync: feed=${feedId} fetched ${stories.length} new stories across ${neededPages.length} page(s)`);
     return stories.map(s => ({
         id: account.id + "___" + s.story_hash,
         rawId: s.story_hash,
@@ -2632,7 +2654,7 @@ async function syncFeed(feedObj){
   startBgTask();
   try {
     const account = CFG.accounts.find(a => a.id === feedObj.accountId);
-    if(!account) return;
+    if(!account) return [];
     // Entries already stored locally for this feed (any status — read items
     // aren't purged, so this is a reliable "don't need to re-fetch" set)
     // let the API layer skip pages/items it doesn't need to re-download.
@@ -2648,34 +2670,69 @@ async function syncFeed(feedObj){
       }
     }
     await putEntries(entries);
-    if(!CFG.neverFetchImages){
-      for(const e of entries){ await prefetchThumbnailForEntry(e); }
-    }
-    if(CFG.imageCacheMode === "all" && !CFG.neverFetchImages){
-      for(const e of entries){ await prefetchImagesForEntry(e); }
+    return entries;
+  } finally {
+    endBgTask();
+  }
+}
+
+// Thumbnail/full-image warm-up for freshly-synced entries. Deliberately kept
+// separate from syncFeed() itself: fetching and storing entries is one or
+// two fast JSON requests, while fetching+decoding potentially dozens of
+// images per feed is the slow part. Gating a feed's "done" signal (and its
+// unread-count update) on this made every refresh feel like it was hanging.
+// This runs afterward, still visible via the same "Syncing..." background
+// -task indicator, without blocking anything the user is actually waiting on.
+async function prefetchFeedMedia(entries){
+  if(CFG.neverFetchImages || !entries || entries.length === 0) return;
+  startBgTask();
+  try{
+    for(const e of entries){ await prefetchThumbnailForEntry(e).catch(()=>{}); }
+    if(CFG.imageCacheMode === "all"){
+      for(const e of entries){ await prefetchImagesForEntry(e).catch(()=>{}); }
     }
   } finally {
     endBgTask();
   }
 }
-// Modest concurrency cap: syncs several feeds at once (so the UI isn't
-// blocked waiting on one feed at a time) without hammering any single
-// account's server with dozens of simultaneous requests.
+
+// Modest concurrency caps: syncs/warms-up several feeds at once (so the UI
+// isn't blocked waiting on one feed at a time) without hammering any single
+// account's server with dozens of simultaneous requests. Kept as two
+// separate limiters so a burst of slow image prefetching can't starve the
+// (much cheaper, much more time-sensitive) entries-fetch+count-update path
+// for feeds still waiting their turn.
 const SYNC_CONCURRENCY = 3;
 const feedSyncLimiter = createLimiter(SYNC_CONCURRENCY);
+const mediaSyncLimiter = createLimiter(SYNC_CONCURRENCY);
 
 // Syncs all selected feeds and updates each one's unread count as soon as
-// that individual feed finishes — not after the whole batch completes. This
-// is what makes feed counts visibly tick up one at a time during a refresh
-// instead of appearing to freeze until every feed is done. onFeedDone (if
+// that individual feed's entries are fetched — not after the whole batch
+// (entries AND every thumbnail) completes. This is what makes feed counts
+// visibly tick up one at a time during a refresh instead of appearing to
+// freeze until everything, including every image, is done. onFeedDone (if
 // given) fires after each feed's own count is updated, so the caller can
-// re-render the feed list progressively.
+// re-render the feed list progressively. Each feed's work is individually
+// try/caught so one feed's failure can't reject the whole batch and leave a
+// caller's "Refreshing..." indicator stuck forever.
 async function syncAllFeeds(onFeedDone){
   await processOutbox();
   await Promise.all(CFG.selectedFeeds.map(f => feedSyncLimiter(async ()=>{
-    await syncFeed(f).catch(()=>{});
-    await refreshCounterForFeed(f);
+    let entries = [];
+    try{
+      entries = await syncFeed(f) || [];
+    }catch(e){
+      debug(`syncFeed failed for feed=${f.id}: ${e && e.message}`);
+    }
+    try{
+      await refreshCounterForFeed(f);
+    }catch(e){
+      debug(`refreshCounterForFeed failed for feed=${f.id}: ${e && e.message}`);
+    }
     if(onFeedDone) onFeedDone(f);
+    if(entries.length){
+      mediaSyncLimiter(()=>prefetchFeedMedia(entries)).catch(()=>{});
+    }
   })));
 }
 
