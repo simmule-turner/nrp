@@ -671,7 +671,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.32"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.34"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1389,9 +1389,9 @@ async function apiGetCounters(account) {
   if (account.type === 'newsblur') return nbGetCounters(account);
   throw new Error("Unknown account type");
 }
-async function apiGetUnreadEntries(account, rawFeedId) {
-  if (account.type === 'miniflux') return mfGetUnreadEntries(account, rawFeedId);
-  if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId);
+async function apiGetUnreadEntries(account, rawFeedId, knownRawIds) {
+  if (account.type === 'miniflux') return mfGetUnreadEntries(account, rawFeedId, knownRawIds);
+  if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId, knownRawIds);
   throw new Error("Unknown account type");
 }
 async function apiMarkStatus(account, rawEntryIds, status, rawFeedId) {
@@ -1427,10 +1427,32 @@ async function mfGetCounters(account){
   const c = await mfFetch(account, "/v1/feeds/counters");
   return c.unreads || {};
 }
-async function mfGetUnreadEntries(account, feedId){
-  const q = `/v1/feeds/${feedId}/entries?status=unread&limit=${account.maxItems}&order=published_at&direction=desc`;
-  const raw = await mfFetch(account, q);
-  return (raw.entries || []).map(e => ({
+// Miniflux's /v1/feeds/:id/entries has no content-less "just check IDs" mode
+// (unlike NewsBlur's include_story_content=false), so dedup here works by
+// paging in modest chunks (offset+limit, both standard/documented params)
+// instead of one big limit=maxItems request, and stopping as soon as a whole
+// page turns out to be entries we already have stored locally — newest-first
+// ordering means anything further back would be known too. This means a
+// quiet feed with nothing new costs one small page instead of a full
+// maxItems-sized re-download every sync.
+const MF_PAGE_SIZE = 25;
+async function mfGetUnreadEntries(account, feedId, knownRawIds){
+  knownRawIds = knownRawIds || new Set();
+  const maxNeeded = account.maxItems || 50;
+  const MAX_PAGES = 40; // safety cap
+  let newEntries = [];
+  for(let page = 0; newEntries.length < maxNeeded && page < MAX_PAGES; page++){
+    const offset = page * MF_PAGE_SIZE;
+    const q = `/v1/feeds/${feedId}/entries?status=unread&limit=${MF_PAGE_SIZE}&offset=${offset}&order=published_at&direction=desc`;
+    const raw = await mfFetch(account, q);
+    const pageEntries = (raw && raw.entries) || [];
+    if(pageEntries.length === 0) break; // no more unread entries at all
+    const freshOnThisPage = pageEntries.filter(e => !knownRawIds.has(String(e.id)));
+    newEntries = newEntries.concat(freshOnThisPage);
+    if(freshOnThisPage.length === 0) break; // whole page already known — stop
+  }
+  newEntries = newEntries.slice(0, maxNeeded);
+  return newEntries.map(e => ({
     id: account.id + "___" + e.id,
     rawId: String(e.id),
     feedId: account.id + "___" + e.feed_id,
@@ -1535,10 +1557,62 @@ async function nbGetCounters(account){
     return counts;
 }
 
-async function nbGetUnreadEntries(account, feedId){
-    const res = await nbFetch(account, `/reader/feed/${feedId}?read_filter=unread&limit=${account.maxItems}`);
-    const entries = res.stories || [];
-    return entries.map(s => ({
+// NewsBlur's /reader/feed/:id endpoint has no "limit" query param — it
+// always returns one fixed-size page (server-controlled, historically
+// ~25 stories) regardless of what's passed. To actually honor the
+// account's configured "max items per feed/sync", page through with
+// page=1,2,3... (order=newest, read_filter=unread so we only pull pages
+// of unread content, include_story_content=true since NRP needs the full
+// body) until either maxItems is reached or a page comes back empty.
+// Two-phase sync to minimize data transfer:
+//  Phase 1 (cheap): page through with include_story_content=false — per
+//    NewsBlur's own API docs, this is specifically meant for "just checking
+//    for story ids and meta-data" — to find out which pages actually
+//    contain anything not already stored locally. Reverse-chronological
+//    order (order=newest) means once a whole page is entirely stuff we
+//    already have, everything further back is too, so we stop there.
+//  Phase 2: only re-fetch (with full content) the pages phase 1 flagged as
+//    having something new, and drop anything in them that turned out to
+//    already be known. Pages that were entirely redundant never have their
+//    full content downloaded at all.
+async function nbGetUnreadEntries(account, feedId, knownRawIds){
+    knownRawIds = knownRawIds || new Set();
+    const maxNeeded = account.maxItems || 50;
+    const MAX_PAGES = 40; // hard safety cap so a misbehaving feed/API can't loop forever
+
+    let neededPages = [];
+    let newCount = 0;
+    for(let page = 1; page <= MAX_PAGES && newCount < maxNeeded; page++){
+        const res = await nbFetch(account, `/reader/feed/${feedId}?page=${page}&order=newest&read_filter=unread&include_story_content=false`);
+        if(res.error){
+            debug(`NewsBlur check-pass page ${page} failed for feed=${feedId}: ${res.message}`);
+            break;
+        }
+        const pageStories = res.stories || [];
+        if(pageStories.length === 0) break; // no more unread stories left in this feed
+        const newOnPage = pageStories.filter(s => !knownRawIds.has(s.story_hash));
+        if(newOnPage.length === 0) break; // whole page already known — stop here
+        neededPages.push(page);
+        newCount += newOnPage.length;
+    }
+
+    if(neededPages.length === 0) return [];
+
+    let stories = [];
+    let feedsMeta = null;
+    for(const page of neededPages){
+        if(stories.length >= maxNeeded) break;
+        const res = await nbFetch(account, `/reader/feed/${feedId}?page=${page}&order=newest&read_filter=unread&include_story_content=true`);
+        if(res.error){
+            debug(`NewsBlur content-pass page ${page} failed for feed=${feedId}: ${res.message}`);
+            break;
+        }
+        if(!feedsMeta) feedsMeta = res.feeds;
+        const freshStories = (res.stories || []).filter(s => !knownRawIds.has(s.story_hash));
+        stories = stories.concat(freshStories);
+    }
+    stories = stories.slice(0, maxNeeded);
+    return stories.map(s => ({
         id: account.id + "___" + s.story_hash,
         rawId: s.story_hash,
         feedId: account.id + "___" + feedId,
@@ -1552,7 +1626,7 @@ async function nbGetUnreadEntries(account, feedId){
         status: "unread",
         starred: s.starred ? true : false,
         enclosureUrl: s.image_urls && s.image_urls.length ? s.image_urls[0] : null,
-        feedTitle: res.feeds && res.feeds[s.story_feed_id] ? res.feeds[s.story_feed_id].feed_title : null
+        feedTitle: feedsMeta && feedsMeta[s.story_feed_id] ? feedsMeta[s.story_feed_id].feed_title : null
     }));
 }
 
@@ -2588,7 +2662,12 @@ async function syncFeed(feedObj){
   try {
     const account = CFG.accounts.find(a => a.id === feedObj.accountId);
     if(!account) return;
-    const entries = await apiGetUnreadEntries(account, feedObj.rawId);
+    // Entries already stored locally for this feed (any status — read items
+    // aren't purged, so this is a reliable "don't need to re-fetch" set)
+    // let the API layer skip pages/items it doesn't need to re-download.
+    const existingLocal = await getEntriesByFeed(feedObj.id);
+    const knownRawIds = new Set(existingLocal.map(e => e.rawId));
+    const entries = await apiGetUnreadEntries(account, feedObj.rawId, knownRawIds);
 
     for(const e of entries){
       const existing = await getEntry(e.id);
