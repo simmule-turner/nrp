@@ -671,7 +671,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.35"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.36"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1373,11 +1373,6 @@ async function apiGetFeeds(account) {
   if (account.type === 'newsblur') return nbGetFeeds(account);
   throw new Error("Unknown account type");
 }
-async function apiGetCounters(account) {
-  if (account.type === 'miniflux') return mfGetCounters(account);
-  if (account.type === 'newsblur') return nbGetCounters(account);
-  throw new Error("Unknown account type");
-}
 async function apiGetUnreadEntries(account, rawFeedId, knownRawIds) {
   if (account.type === 'miniflux') return mfGetUnreadEntries(account, rawFeedId, knownRawIds);
   if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId, knownRawIds);
@@ -1411,10 +1406,6 @@ async function mfGetFeeds(account){
   return feeds.map(f => ({
     id: String(f.id), title: f.title, categoryTitle: (f.category && f.category.title) || "Uncategorized"
   }));
-}
-async function mfGetCounters(account){
-  const c = await mfFetch(account, "/v1/feeds/counters");
-  return c.unreads || {};
 }
 // Miniflux's /v1/feeds/:id/entries has no content-less "just check IDs" mode
 // (unlike NewsBlur's include_story_content=false), so dedup here works by
@@ -1535,15 +1526,6 @@ async function nbGetFeeds(account){
         });
     }
     return out;
-}
-
-async function nbGetCounters(account){
-    const res = await nbFetch(account, "/reader/refresh_feeds");
-    const counts = {};
-    for (const id in res.feeds) {
-        counts[id] = (res.feeds[id].nt || 0) + (res.feeds[id].ps || 0);
-    }
-    return counts;
 }
 
 // NewsBlur's /reader/feed/:id endpoint has no "limit" query param — it
@@ -2676,25 +2658,40 @@ async function syncFeed(feedObj){
     endBgTask();
   }
 }
-async function syncAllFeeds(){
+// Modest concurrency cap: syncs several feeds at once (so the UI isn't
+// blocked waiting on one feed at a time) without hammering any single
+// account's server with dozens of simultaneous requests.
+const SYNC_CONCURRENCY = 3;
+const feedSyncLimiter = createLimiter(SYNC_CONCURRENCY);
+
+// Syncs all selected feeds and updates each one's unread count as soon as
+// that individual feed finishes — not after the whole batch completes. This
+// is what makes feed counts visibly tick up one at a time during a refresh
+// instead of appearing to freeze until every feed is done. onFeedDone (if
+// given) fires after each feed's own count is updated, so the caller can
+// re-render the feed list progressively.
+async function syncAllFeeds(onFeedDone){
   await processOutbox();
-  for(const f of CFG.selectedFeeds){ await syncFeed(f).catch(()=>{}); }
-  await refreshCounters();
+  await Promise.all(CFG.selectedFeeds.map(f => feedSyncLimiter(async ()=>{
+    await syncFeed(f).catch(()=>{});
+    await refreshCounterForFeed(f);
+    if(onFeedDone) onFeedDone(f);
+  })));
+}
+
+// Cheap, single-feed unread count via the entries store's existing by_feed
+// index — reads only that feed's own records instead of pulling every
+// stored entry (potentially thousands, each with full article HTML) into
+// memory just to bucket-count them by feedId.
+async function refreshCounterForFeed(feedObj){
+  const entries = await getEntriesByFeed(feedObj.id);
+  const unreadCount = entries.reduce((n,e)=> e.status === "unread" ? n+1 : n, 0);
+  await tx("feedsCache","readwrite", store=>store.put({ id: feedObj.id, title: feedObj.title, unreadCount }));
+  return unreadCount;
 }
 
 async function refreshCounters(){
-  const allEntries = await idbGetAll("entries");
-  const countsByFeed = {};
-  for(const e of allEntries){
-    if(e.status === "unread"){
-      countsByFeed[e.feedId] = (countsByFeed[e.feedId] || 0) + 1;
-    }
-  }
-  for(const f of CFG.selectedFeeds){
-    const unreadCount = countsByFeed[f.id] || 0;
-    const rec = { id: f.id, title: f.title, unreadCount: unreadCount };
-    await tx("feedsCache","readwrite", store=>store.put(rec));
-  }
+  await Promise.all(CFG.selectedFeeds.map(f => refreshCounterForFeed(f)));
 }
 
 /* ============================= FEED LIST SCREEN ============================= */
@@ -2830,7 +2827,7 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
     const dy = (e.changedTouches[0].clientY - startY);
     if(dy > 70){
       indicator.textContent = "Refreshing\u2026";
-      await syncAllFeeds();
+      await syncAllFeeds(()=>{ renderFeedList(); });
       await renderFeedList();
     }
     indicator.textContent = "";
