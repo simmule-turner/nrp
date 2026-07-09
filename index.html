@@ -219,7 +219,7 @@ fieldset legend {
 </head>
 <body>
 
-  <div id="bg-task-indicator" class="hidden" style="position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px; font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;">Syncing...</div>
+  <div id="bg-task-indicator" class="hidden" style="position:fixed; top:8px; left:50%; transform:translateX(-50%); background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px; font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;">Syncing...</div>
 
   <div class="topbar">
     <button id="btn-back" class="icon hidden" aria-label="Back">&#128072;</button>
@@ -671,7 +671,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.34"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.35"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1126,6 +1126,50 @@ async function ensureThumbnail(entry){
   thumbInFlight.set(entry.id, p);
   return p;
 }
+
+// Shared, URL-deduplicated fetch+cache for remote images. Three different
+// code paths need "get me the bytes for this image URL, fetching and
+// caching it if needed": thumbnail generation (many entries, up to 4
+// concurrently via thumbLimiter), article image display (resolveImageSrc),
+// and bulk prefetch (prefetchImagesForEntry). Previously each had its own
+// copy of the check-cache/fetch/store logic, entirely uncoordinated with
+// the others — so two entries sharing one image URL (e.g. shared podcast
+// cover art, a feed's fallback logo, a reused header image) racing through
+// two of these paths at once would each find nothing cached yet and both
+// independently fetch and store the identical bytes. assetFetchInFlight
+// closes that gap: whichever caller gets there first owns the fetch, and
+// any concurrent caller for the same URL awaits and reuses that same
+// promise instead of starting a second network request.
+const assetFetchInFlight = new Map();
+async function fetchAndCacheAsset(url, account){
+  const cached = await getCachedAsset(url);
+  if(cached && cached.blob){
+    touchAsset(url);
+    return {blob: cached.blob, fromCache: true};
+  }
+  if(assetFetchInFlight.has(url)) return assetFetchInFlight.get(url);
+  const p = (async ()=>{
+    const isDataUri = url.startsWith("data:");
+    const proxied = isDataUri
+      ? {url, opts: {referrerPolicy:"no-referrer"}}
+      : applyProxy(account, "nonApi", url, {referrerPolicy:"no-referrer"});
+    try{
+      const resp = await fetch(proxied.url, proxied.opts);
+      if(resp.ok){
+        const blob = await resp.blob();
+        try{ await storeAsset(url, blob); }
+        catch(storeErr){ if(storeErr && storeErr.tooLarge) recordOversizedImage(url, storeErr.size); }
+        return {blob, fromCache:false};
+      }
+      return {blob:null, fromCache:false};
+    }catch(e){
+      return {blob:null, fromCache:false};
+    }
+  })();
+  assetFetchInFlight.set(url, p);
+  try{ return await p; } finally{ assetFetchInFlight.delete(url); }
+}
+
 async function ensureThumbnailInner(entry){
   const cached = await getThumbFromDb(entry.id);
   if(cached){
@@ -1140,36 +1184,14 @@ async function ensureThumbnailInner(entry){
   }
   recordThumbDebug(`cache MISS id=${entry.id}, generating from ${imgUrl}`);
 
-  let sourceBlob = null;
-  const fullRec = await getCachedAsset(imgUrl);
-  if(fullRec && fullRec.blob){
-    touchAsset(imgUrl);
-    sourceBlob = fullRec.blob;
-    recordThumbDebug(`id=${entry.id} source = asset cache (${fullRec.size} bytes)`);
-  }else{
-    const account = CFG.accounts.find(a => a.id === entry.accountId);
-    const isDataUri = imgUrl.startsWith("data:");
-    const useProxy = !isDataUri && !!(account && account.nonApiProxyEnabled && account.nonApiProxyUrl);
-    const proxied = isDataUri
-      ? {url: imgUrl, opts: {referrerPolicy:"no-referrer"}}
-      : applyProxy(account, "nonApi", imgUrl, {referrerPolicy:"no-referrer"});
-    try{
-      const resp = await fetch(proxied.url, proxied.opts);
-      if(resp.ok){
-        sourceBlob = await resp.blob();
-        recordThumbDebug(`id=${entry.id} source = network fetch${useProxy ? " (via proxy)" : ""} (${sourceBlob.size} bytes)`);
-      }else{
-        recordThumbDebug(`id=${entry.id} fetch failed, status=${resp.status}${useProxy ? " (via proxy)" : ""}`);
-      }
-    }catch(e){
-      recordThumbDebug(`id=${entry.id} fetch threw: ${e && e.name}${useProxy ? " (via proxy)" : ""}`);
-    }
-  }
+  const account = CFG.accounts.find(a => a.id === entry.accountId);
+  const {blob: sourceBlob, fromCache} = await fetchAndCacheAsset(imgUrl, account);
   if(!sourceBlob){
-    cacheOpaqueInBackground(imgUrl, CFG.accounts.find(a => a.id === entry.accountId));
+    cacheOpaqueInBackground(imgUrl, account);
     recordThumbDebug(`id=${entry.id} no source available this attempt`);
     return null;
   }
+  recordThumbDebug(`id=${entry.id} source = ${fromCache ? "asset cache" : "network fetch"} (${sourceBlob.size} bytes)`);
 
   const sourceObjUrl = URL.createObjectURL(sourceBlob);
   try{
@@ -1178,10 +1200,6 @@ async function ensureThumbnailInner(entry){
     const dataUrl = await blobToDataUrl(thumbBlob);
     await setThumbInDb(entry.id, dataUrl);
     recordThumbDebug(`id=${entry.id} thumbnail stored (len=${dataUrl.length})`);
-
-    if(!fullRec){
-      storeAsset(imgUrl, sourceBlob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(imgUrl, err.size); });
-    }
     return dataUrl;
   }catch(e){
     recordThumbDebug(`id=${entry.id} generation threw: ${e && e.message}`);
@@ -1194,29 +1212,13 @@ async function ensureThumbnailInner(entry){
 async function resolveImageSrc(url, entry){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
-  let rec = await getCachedAsset(url);
-  if(rec && rec.blob){
-    touchAsset(url);
-    const obj = URL.createObjectURL(rec.blob);
+  const account = entry ? CFG.accounts.find(a => a.id === entry.accountId) : null;
+  const {blob} = await fetchAndCacheAsset(url, account);
+  if(blob){
+    const obj = URL.createObjectURL(blob);
     objectUrlCache.set(url, obj);
     return obj;
   }
-  const account = entry ? CFG.accounts.find(a => a.id === entry.accountId) : null;
-  const isDataUri = url.startsWith("data:");
-  const proxied = isDataUri
-    ? {url, opts: {referrerPolicy:"no-referrer"}}
-    : applyProxy(account, "nonApi", url, {referrerPolicy:"no-referrer"});
-  try{
-    const resp = await fetch(proxied.url, proxied.opts);
-    if(resp.ok){
-      const blob = await resp.blob();
-      try{ await storeAsset(url, blob); }catch(storeErr){ if(storeErr && storeErr.tooLarge) recordOversizedImage(url, storeErr.size); }
-      const obj = URL.createObjectURL(blob);
-      objectUrlCache.set(url, obj);
-      return obj;
-    }
-  }catch(e){ }
-
   cacheOpaqueInBackground(url, account);
   return url;
 }
@@ -1270,21 +1272,8 @@ async function prefetchImagesForEntry(entry){
     const urls = extractImageUrls(entry.content);
     if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
     for(const url of urls){
-      const existing = await getCachedAsset(url);
-      if(existing) continue;
-      const isDataUri = url.startsWith("data:");
-      const proxied = isDataUri
-        ? {url, opts: {referrerPolicy:"no-referrer"}}
-        : applyProxy(account, "nonApi", url, {referrerPolicy:"no-referrer"});
-      try{
-        const resp = await fetch(proxied.url, proxied.opts);
-        if(resp.ok){
-          const blob = await resp.blob();
-          await storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); });
-          continue;
-        }
-      }catch(e){ }
-      cacheOpaqueInBackground(url, account);
+      const {blob} = await fetchAndCacheAsset(url, account);
+      if(!blob) cacheOpaqueInBackground(url, account);
     }
   } finally {
     endBgTask();
