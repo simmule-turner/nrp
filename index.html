@@ -663,7 +663,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.30"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.31"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1358,7 +1358,7 @@ async function processOutbox(){
         await apiToggleBookmark(account, item.rawId, item.rawFeedId, item.isStarred);
       }else if(item.type === "rl-save"){
         const rlAccount = (CFG.readItLaterAccounts||[]).find(a => a.id === item.accountId);
-        if(rlAccount) await rilSaveEntry(rlAccount, item.title, item.content, item.url);
+        if(rlAccount) await rilSaveEntry(rlAccount, {title:item.title, content:item.content, url:item.url, enclosureUrl:item.enclosureUrl});
       }
       await tx("outbox","readwrite", store=>store.delete(item.seq));
     }catch(e){
@@ -1587,9 +1587,64 @@ async function nbToggleBookmark(account, entryId, rawFeedId, isStarred){
 // Two supported types: "wallabag" (OAuth password grant) and "readeck"
 // (static API token). Both are managed as accounts in CFG.readItLaterAccounts,
 // analogous to the reader accounts in CFG.accounts.
-async function rilSaveEntry(account, title, content, url){
-  if(account.type === "wallabag") return wbSaveEntry(account, title, content, url);
-  if(account.type === "readeck") return rdSaveEntry(account, title, content, url);
+
+// Builds the HTML (and candidate image URL list) actually sent to a
+// read-it-later service, from a plain {title, content, url, enclosureUrl}
+// entry-like object. Two fixes live here:
+//  1. Many feeds lazy-load images: the <img> tag's visible `src` is a tiny
+//     placeholder pixel and the real URL only lives in `data-src`. NRP
+//     already prefers `data-src` when rendering locally, but the raw
+//     `entry.content` we used to forward as-is still had the placeholder in
+//     `src` — so a service parsing that HTML (or trying to match an
+//     attached resource's Location against what's referenced in the body)
+//     would never find the real image. This rewrites `src` to the real URL
+//     first.
+//  2. Many feeds' "cover" image is a separate enclosure (Miniflux/NewsBlur
+//     enclosure metadata), not something embedded in the article body at
+//     all — this is exactly what NRP's own thumbnail logic prefers
+//     (`entry.enclosureUrl || firstImageUrl(content)`), but nothing in the
+//     body HTML ever referenced it. Wallabag tends to paper over this by
+//     independently re-fetching the live URL and reading its own <head>
+//     og:image — Readeck's front-page thumbnail, per its own docs, is driven
+//     entirely by whatever document it's given, so it needs either a real
+//     <img> in the body or <meta property="og:image">. This adds both: an
+//     og:image meta tag always, and (only when the body has no image of its
+//     own) a leading <img> too.
+function prepareContentForReadItLater(entry){
+  let html = entry.content || "";
+  try{
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("img").forEach(img=>{
+      const dataSrc = img.getAttribute("data-src");
+      if(dataSrc) img.setAttribute("src", dataSrc);
+    });
+    html = doc.body.innerHTML;
+  }catch(e){ /* keep the raw content as-is if this fails */ }
+
+  const imageUrls = extractImageUrls(html);
+  const coverUrl = entry.enclosureUrl || imageUrls[0] || null;
+
+  if(coverUrl){
+    if(!imageUrls.includes(coverUrl)){
+      imageUrls.unshift(coverUrl);
+      if(imageUrls.length === 1){
+        // No inline image at all — give a real <img> in the body, not just
+        // a meta hint, since that's what most front-page detection wants.
+        html = `<img src="${escapeAttr(coverUrl)}">` + html;
+      }
+    }
+    const head = `<title>${escapeHtml(entry.title||"")}</title>`
+      + `<meta property="og:image" content="${escapeAttr(coverUrl)}">`;
+    html = `<html><head>${head}</head><body>${html}</body></html>`;
+  }
+
+  return {html, imageUrls};
+}
+
+async function rilSaveEntry(account, entry){
+  const prepared = prepareContentForReadItLater(entry);
+  if(account.type === "wallabag") return wbSaveEntry(account, entry.title, prepared.html, entry.url);
+  if(account.type === "readeck") return rdSaveEntry(account, entry.title, prepared.html, entry.url, prepared.imageUrls);
   throw new Error("Unknown read-it-later account type");
 }
 
@@ -1606,7 +1661,8 @@ async function wbEnsureToken(account){
   });
   const resp = await fetch(proxied.url, proxied.opts);
   if(!resp.ok){
-    rlLog(`Wallabag auth failed for "${account.name}": status=${resp.status}`);
+    let detail = ""; try{ detail = (await resp.text()).slice(0,300); }catch(e){}
+    rlLog(`Wallabag auth failed for "${account.name}": status=${resp.status}${detail ? ", body="+detail : ""}`);
     throw new Error("Wallabag auth failed "+resp.status);
   }
   const data = await resp.json();
@@ -1624,7 +1680,8 @@ async function wbSaveEntry(account, title, content, url){
   });
   const resp = await fetch(proxied.url, proxied.opts);
   if(!resp.ok){
-    rlLog(`Wallabag save failed for "${account.name}": status=${resp.status}, url=${url}`);
+    let detail = ""; try{ detail = (await resp.text()).slice(0,300); }catch(e){}
+    rlLog(`Wallabag save failed for "${account.name}": status=${resp.status}, url=${url}${detail ? ", body="+detail : ""}`);
     throw new Error("Wallabag save failed "+resp.status);
   }
   return resp.json();
@@ -1662,21 +1719,22 @@ function buildMultipartBody(parts, boundary){
 // Per Readeck's own API docs (docs/api/bookmarks/doc-create.md,
 // https://codeberg.org/readeck/readeck/issues/106):
 //  - a bare {url, title} JSON POST works for a normal, server-scraped save
-//  - adding an "html" field (JSON or multipart) supplies the page content
-//    directly instead of having Readeck re-fetch/extract it
-//  - attaching extra binary "resource" parts (multipart only), each with a
+//  - attaching binary "resource" parts (multipart), each with a
 //    Content-Disposition of `form-data; name="resource"; filename="_"` and a
-//    `Location` header equal to the resource's own URL, lets images the
-//    referenced HTML points at be supplied too — useful when a site's images
-//    require the same session/referer/auth as the article itself and would
-//    otherwise fail Readeck's own later fetch.
+//    `Location` header equal to the resource's own URL, supplies the page's
+//    own content directly (the main HTML is itself one such resource, with
+//    Location equal to the bookmark's URL) plus any images it references —
+//    useful when a site's content/images require the same session/referer/
+//    auth as the article itself and would otherwise fail Readeck's own
+//    later fetch, and it's what actually determines Readeck's front-page
+//    thumbnail (see prepareContentForReadItLater() above).
 // rdSaveEntry() tries the richest option first (content + any cached images)
-// and falls back to progressively simpler requests if a step fails, so a
-// Readeck save never just breaks outright.
-async function rdSaveEntry(account, title, content, url){
+// and falls back to a plain URL-only save if that fails, so a Readeck save
+// never just breaks outright.
+async function rdSaveEntry(account, title, content, url, imageUrls){
   if(account.sendFullContent !== false && content){
     try{
-      return await rdSaveWithContent(account, title, content, url);
+      return await rdSaveWithContent(account, title, content, url, imageUrls||[]);
     }catch(e){
       rlLog(`Readeck content upload failed for "${account.name}" (${url}): ${e && e.message}. Falling back to URL-only save.`);
     }
@@ -1684,7 +1742,12 @@ async function rdSaveEntry(account, title, content, url){
   return rdSaveUrlOnly(account, title, url);
 }
 
-async function rdSaveWithContent(account, title, content, url){
+// Combined size budget for attached image resources, so an image-heavy
+// article can't balloon a single save into a huge upload — Readeck can
+// always fetch anything we skip on its own, same as before this feature.
+const READECK_ATTACH_BUDGET_BYTES = 20 * 1024 * 1024;
+
+async function rdSaveWithContent(account, title, content, url, imageUrls){
   const boundary = "NRPReadeck" + Date.now().toString(16) + Math.random().toString(16).slice(2);
   const parts = [
     {headers:[["Content-Disposition", 'form-data; name="url"']], body: url},
@@ -1696,17 +1759,18 @@ async function rdSaveWithContent(account, title, content, url){
     ], body: content}
   ];
 
-  // Attach any images referenced in the article that we already have cached
-  // locally, so Readeck doesn't need to fetch them itself. This is
-  // best-effort and only uses what's already in NRP's image cache — it
-  // never triggers new network fetches on send, to keep "Send to Readeck"
-  // fast and to avoid duplicating the reader account's own proxy/auth setup.
-  const imgUrls = extractImageUrls(content);
-  let attached = 0;
-  for(const imgUrl of imgUrls){
+  // Attach any images (including the cover/enclosure image resolved in
+  // prepareContentForReadItLater) that we already have cached locally, so
+  // Readeck doesn't need to fetch them itself. This is best-effort and only
+  // uses what's already in NRP's image cache — it never triggers new
+  // network fetches on send, to keep "Send to Readeck" fast — and is capped
+  // so a gallery-heavy article can't produce an oversized upload.
+  let attached = 0, attachedBytes = 0;
+  for(const imgUrl of imageUrls){
     try{
       const cached = await getCachedAsset(imgUrl);
       if(cached && cached.blob){
+        if(attachedBytes + cached.blob.size > READECK_ATTACH_BUDGET_BYTES) continue;
         parts.push({
           headers:[
             ["Content-Disposition", 'form-data; name="resource"; filename="_"'],
@@ -1715,12 +1779,13 @@ async function rdSaveWithContent(account, title, content, url){
           ],
           body: cached.blob
         });
+        attachedBytes += cached.blob.size;
         attached++;
       }
     }catch(e){ /* skip this image; not fatal to the save */ }
   }
-  if(imgUrls.length > attached){
-    rlLog(`Readeck save for "${account.name}" (${url}): ${attached}/${imgUrls.length} referenced image(s) were cached and attached; the rest will be fetched by Readeck itself.`);
+  if(imageUrls.length > attached){
+    rlLog(`Readeck save for "${account.name}" (${url}): ${attached}/${imageUrls.length} referenced image(s) were cached and attached; the rest will be fetched by Readeck itself.`);
   }
 
   const body = buildMultipartBody(parts, boundary);
@@ -1733,7 +1798,10 @@ async function rdSaveWithContent(account, title, content, url){
     },
     body
   });
-  if(!resp.ok) throw new Error("status="+resp.status);
+  if(!resp.ok){
+    let detail = ""; try{ detail = (await resp.text()).slice(0,300); }catch(e){}
+    throw new Error(`status=${resp.status}${detail ? ", body="+detail : ""}`);
+  }
   try{ return await resp.json(); }catch(e){ return null; }
 }
 
@@ -1748,7 +1816,8 @@ async function rdSaveUrlOnly(account, title, url){
     body: JSON.stringify({url, title})
   });
   if(!resp.ok){
-    rlLog(`Readeck save failed for "${account.name}": status=${resp.status}, url=${url}`);
+    let detail = ""; try{ detail = (await resp.text()).slice(0,300); }catch(e){}
+    rlLog(`Readeck save failed for "${account.name}": status=${resp.status}, url=${url}${detail ? ", body="+detail : ""}`);
     throw new Error("Readeck save failed "+resp.status);
   }
   try{ return await resp.json(); }catch(e){ return null; }
@@ -3086,11 +3155,11 @@ async function sendToReadItLater(accountId){
   const label = account.name || (account.type === "wallabag" ? "Wallabag" : "Readeck");
   toast(`Sending to ${label}...`);
   try{
-    await rilSaveEntry(account, currentEntry.title, currentEntry.content, currentEntry.url);
+    await rilSaveEntry(account, currentEntry);
     toast("Saved to " + label);
   }catch(e){
     rlLog(`Send to "${label}" failed for ${currentEntry.url}, queued for retry: ${e && e.message}`);
-    await enqueueOutbox({type:"rl-save", accountId: account.id, title:currentEntry.title, content:currentEntry.content, url:currentEntry.url});
+    await enqueueOutbox({type:"rl-save", accountId: account.id, title:currentEntry.title, content:currentEntry.content, url:currentEntry.url, enclosureUrl:currentEntry.enclosureUrl});
     toast("Queued for " + label);
   }
 }
