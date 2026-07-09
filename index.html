@@ -81,7 +81,7 @@
     width:auto; min-width:0; max-width:88px;
     padding:.3em .35em; font-size:12px;
   }
-  .screen{ flex:1; overflow-x:hidden; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  .screen{ flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
   .pad{ padding:1em; max-width:640px; margin:0 auto; }
 
   /* badge */
@@ -200,6 +200,14 @@ fieldset {
   border-radius: 6px;        /* Optional: Rounds the corners slightly */
   padding: 15px;             /* Optional: Adds breathing room inside the box */
   margin-bottom: 20px;       /* Optional: Adds space below the fieldset */
+  min-width: 0;              /* Browsers give fieldsets an intrinsic min-width
+                                 equal to their content's min-content size by
+                                 default, which ignores overflow/truncation
+                                 rules on descendants (e.g. nowrap text in
+                                 .account-item) and can force the whole page
+                                 wider than the viewport. This override lets
+                                 the fieldset shrink to the available width
+                                 like a normal block element. */
 }
 
 /* Optional: Style the legend so it matches nicely with the dark border */
@@ -663,7 +671,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.31"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.32"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
