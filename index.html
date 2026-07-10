@@ -99,6 +99,7 @@
     font-size:12px; text-transform:uppercase; letter-spacing:.07em; cursor:pointer;
     color:var(--muted); background:var(--raised); border-top:1px solid var(--border);
     border-bottom:1px solid var(--border); font-weight:700;
+    -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
   }
   .feed-folder-header:active{ background:color-mix(in srgb, var(--fg) 8%, transparent); }
   .feed-folder-header .chevron{ display:inline-block; width:1em; font-size:11px; }
@@ -688,7 +689,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.40"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.41"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1468,9 +1469,9 @@ async function apiGetFeeds(account) {
   if (account.type === 'newsblur') return nbGetFeeds(account);
   throw new Error("Unknown account type");
 }
-async function apiGetUnreadEntries(account, rawFeedId, knownRawIds) {
+async function apiGetUnreadEntries(account, rawFeedId, knownRawIds, contentMode) {
   if (account.type === 'miniflux') return mfGetUnreadEntries(account, rawFeedId, knownRawIds);
-  if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId, knownRawIds);
+  if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId, knownRawIds, contentMode);
   throw new Error("Unknown account type");
 }
 async function apiMarkStatus(account, rawEntryIds, status, rawFeedId) {
@@ -1655,7 +1656,32 @@ async function nbFetchPageWithRetry(account, path){
     }
     return res;
 }
-async function nbGetUnreadEntries(account, feedId, knownRawIds){
+// Fetches NewsBlur's server-extracted "original text" for a single story —
+// what NewsBlur's own clients use for "Text view". story_hash is passed
+// through as-is (NewsBlur's story_id in this endpoint is the numeric/string
+// suffix of story_hash, i.e. everything after the "feedId:" prefix).
+async function nbFetchOriginalText(account, feedId, storyHash){
+    const storyId = (storyHash||"").includes(":") ? storyHash.split(":").slice(1).join(":") : storyHash;
+    const res = await nbFetch(account, `/rss_feeds/original_text?story_id=${encodeURIComponent(storyId)}&feed_id=${encodeURIComponent(feedId)}`);
+    if(res.error) return null;
+    return res.original_text || res.text || res.content || null;
+}
+// Fetches the story's actual original web page directly — what NewsBlur's
+// own clients call "Original view". This is a plain fetch of the live page
+// (through the account's image/thumbnail proxy, since it's an arbitrary
+// external site rather than a NewsBlur API call), not extraction/readability
+// — the fetched markup is used as-is, same as everything else NRP treats as
+// "article content".
+async function nbFetchOriginalStoryHtml(account, permalinkUrl){
+    if(!permalinkUrl) return null;
+    try{
+        const proxied = applyProxy(account, "nonApi", permalinkUrl, {referrerPolicy:"no-referrer"});
+        const resp = await fetch(proxied.url, proxied.opts);
+        if(!resp.ok) return null;
+        return await resp.text();
+    }catch(e){ return null; }
+}
+async function nbGetUnreadEntries(account, feedId, knownRawIds, contentMode){
     knownRawIds = knownRawIds || new Set();
     const maxNeeded = account.maxItems || 50;
     const MAX_PAGES = 40; // hard safety cap so a misbehaving feed/API can't loop forever
@@ -1707,6 +1733,17 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds){
     }
     stories = stories.slice(0, maxNeeded);
     debug(`NewsBlur sync: feed=${feedId} fetched ${stories.length} new stories across ${neededPages.length} page(s)`);
+
+    if(contentMode === "original_text" || contentMode === "original_story"){
+        for(const s of stories){
+            const replacement = contentMode === "original_text"
+                ? await nbFetchOriginalText(account, feedId, s.story_hash)
+                : await nbFetchOriginalStoryHtml(account, s.story_permalink);
+            if(replacement) s.story_content = replacement;
+            else debug(`NewsBlur ${contentMode} fetch returned nothing for story_hash=${s.story_hash}, keeping feed-provided content`);
+        }
+    }
+
     return stories.map(s => ({
         id: account.id + "___" + s.story_hash,
         rawId: s.story_hash,
@@ -2089,6 +2126,36 @@ function toast(msg){
   el.textContent = msg; el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>el.classList.remove("show"), 2600);
+}
+
+// Generic long-press-vs-short-press handler for an element: a hold past
+// LONG_PRESS_MS fires onLongPress and suppresses the following short-press
+// action; a normal tap/click (or a press cancelled by scrolling away) fires
+// onShortPress instead. Supports both touch and mouse so it also works in
+// a desktop browser during development.
+const LONG_PRESS_MS = 550;
+function attachLongPress(el, {onShortPress, onLongPress, excludeSelector}){
+  let timer = null, firedLong = false, suppressed = false;
+  const start = (ev)=>{
+    suppressed = !!(excludeSelector && ev.target && ev.target.closest && ev.target.closest(excludeSelector));
+    if(suppressed) return;
+    firedLong = false;
+    clearTimeout(timer);
+    timer = setTimeout(()=>{ firedLong = true; if(onLongPress) onLongPress(); }, LONG_PRESS_MS);
+  };
+  const cancel = ()=>{ clearTimeout(timer); };
+  const end = ()=>{
+    clearTimeout(timer);
+    if(suppressed) return;
+    if(!firedLong && onShortPress) onShortPress();
+  };
+  el.addEventListener("touchstart", start, {passive:true});
+  el.addEventListener("touchend", end);
+  el.addEventListener("touchmove", cancel, {passive:true});
+  el.addEventListener("touchcancel", cancel);
+  el.addEventListener("mousedown", start);
+  el.addEventListener("mouseup", end);
+  el.addEventListener("mouseleave", cancel);
 }
 
 /* ============================= CONFIG SCREEN LOGIC ============================= */
@@ -2536,10 +2603,11 @@ $("#btn-manage-feeds").addEventListener("click", async ()=>{
         const uid = acc.id + "___" + f.id;
         const prior = selectedById.get(uid);
         feedPickerChoices.set(uid, {
-          uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, title: f.title,
+          uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, accountType: acc.type, title: f.title,
           checked: !!prior,
           categoryTitle: f.categoryTitle || "Uncategorized",
-          folderName: prior ? (prior.folderName || null) : null
+          folderName: prior ? (prior.folderName || null) : null,
+          contentMode: prior ? (prior.contentMode || "default") : "default"
         });
       });
     }
@@ -2578,6 +2646,52 @@ $("#btn-deselect-all").addEventListener("click", () => {
   renderFeedPicker();
 });
 
+// Lets the user pick how a NewsBlur feed's stories are fetched on future
+// syncs: "default" (feed-provided content, as-is), "original_text"
+// (NewsBlur's own server-side extracted text — what NewsBlur calls Text
+// view), or "original_story" (the live original page — what NewsBlur calls
+// Original view). Mirrors NewsBlur's own per-feed Feed/Text/Original view
+// setting, implemented client-side here since it drives what NRP itself
+// requests on sync rather than a NewsBlur-side display preference.
+function showContentModeMenu(f, anchorEl){
+  const existing = document.getElementById("content-mode-menu");
+  if(existing) existing.remove();
+
+  const menu = document.createElement("div");
+  menu.id = "content-mode-menu";
+  menu.style.cssText = "position:fixed; z-index:100; background:var(--bg); border:1px solid var(--border); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.3); min-width:200px; overflow:hidden;";
+  const rect = anchorEl.getBoundingClientRect();
+  const top = Math.min(rect.bottom + 4, window.innerHeight - 150);
+  const left = Math.max(Math.min(rect.left, window.innerWidth - 210), 8);
+  menu.style.top = top + "px";
+  menu.style.left = left + "px";
+
+  const options = [
+    {value:"default", label:"Feed view (default)"},
+    {value:"original_text", label:"Text view (original_text)"},
+    {value:"original_story", label:"Original view (original_story)"}
+  ];
+  const current = f.contentMode || "default";
+  options.forEach(opt=>{
+    const item = document.createElement("button");
+    item.textContent = (current === opt.value ? "\u2713 " : "\u2003\u2002") + opt.label;
+    item.style.cssText = "display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:.8em 1em; min-height:auto; font-weight:500;";
+    item.addEventListener("click", ()=>{
+      f.contentMode = opt.value;
+      menu.remove();
+      renderFeedPicker();
+    });
+    menu.appendChild(item);
+  });
+
+  document.body.appendChild(menu);
+  setTimeout(()=>{
+    document.addEventListener("click", function closeMenu(ev){
+      if(!menu.contains(ev.target)){ menu.remove(); document.removeEventListener("click", closeMenu); }
+    });
+  }, 0);
+}
+
 function renderFeedPicker(){
   const list = $("#feed-picker-list");
   list.innerHTML = "";
@@ -2595,6 +2709,15 @@ function renderFeedPicker(){
     cb.addEventListener("change", ()=>{ f.checked = cb.checked; refreshStartupOptions(); });
     const lab = document.createElement("div"); lab.className = "grow";
     lab.innerHTML = `<div>${escapeHtml(f.title)}</div><div style="font-size:10px; color:var(--muted);">${escapeHtml(f.accountName)}</div>`;
+    if(f.accountType === "newsblur"){
+      const modeLabels = {default:"Feed view", original_text:"Text view", original_story:"Original view"};
+      const modeLine = document.createElement("div");
+      modeLine.style.cssText = "font-size:10px; color:var(--accent); margin-top:.1em;";
+      modeLine.textContent = modeLabels[f.contentMode || "default"] + " \u2039change\u203a";
+      lab.appendChild(modeLine);
+      lab.style.cursor = "pointer";
+      lab.addEventListener("click", ()=>showContentModeMenu(f, lab));
+    }
     row.appendChild(cb); row.appendChild(lab);
 
     if(CFG.folderMode === "manual"){
@@ -2731,7 +2854,8 @@ $("#btn-save-config").addEventListener("click", async ()=>{
     const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({
       id: f.uid, rawId: f.rawId, accountId: f.accountId, title: f.title,
       folderName: CFG.folderMode==="miniflux" ? (f.categoryTitle||null)
-                : CFG.folderMode==="manual" ? (f.folderName||null) : null
+                : CFG.folderMode==="manual" ? (f.folderName||null) : null,
+      contentMode: f.contentMode || "default"
     }));
     const nowIds = new Set(nowSelected.map(f=>f.id));
     const removedIds = [...previouslySelected].filter(id=>!nowIds.has(id));
@@ -2768,7 +2892,7 @@ async function syncFeed(feedObj){
     // let the API layer skip pages/items it doesn't need to re-download.
     const existingLocal = await getEntriesByFeed(feedObj.id);
     const knownRawIds = new Set(existingLocal.map(e => e.rawId));
-    const entries = await apiGetUnreadEntries(account, feedObj.rawId, knownRawIds);
+    const entries = await apiGetUnreadEntries(account, feedObj.rawId, knownRawIds, feedObj.contentMode);
 
     for(const e of entries){
       const existing = await getEntry(e.id);
@@ -2823,9 +2947,9 @@ const mediaSyncLimiter = createLimiter(SYNC_CONCURRENCY);
 // re-render the feed list progressively. Each feed's work is individually
 // try/caught so one feed's failure can't reject the whole batch and leave a
 // caller's "Refreshing..." indicator stuck forever.
-async function syncAllFeeds(onFeedDone){
+async function syncFeedList(feedList, onFeedDone){
   await processOutbox();
-  await Promise.all(CFG.selectedFeeds.map(f => feedSyncLimiter(async ()=>{
+  await Promise.all(feedList.map(f => feedSyncLimiter(async ()=>{
     let entries = [];
     try{
       entries = await syncFeed(f) || [];
@@ -2842,6 +2966,20 @@ async function syncAllFeeds(onFeedDone){
       mediaSyncLimiter(()=>prefetchFeedMedia(entries)).catch(()=>{});
     }
   })));
+}
+async function syncAllFeeds(onFeedDone){
+  return syncFeedList(CFG.selectedFeeds, onFeedDone);
+}
+// Long-press a folder header to sync just that folder's feeds, without
+// waiting on (or re-fetching) every other selected feed.
+async function syncFolder(folderName){
+  const feeds = CFG.selectedFeeds.filter(f => (f.folderName || "Unfiled") === folderName);
+  if(feeds.length === 0) return;
+  if(navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
+  toast(`Syncing "${folderName}"\u2026`);
+  await syncFeedList(feeds, ()=>{ renderFeedList(); });
+  await renderFeedList();
+  toast(`Synced "${folderName}"`);
 }
 
 // Cheap, single-feed unread count via the entries store's existing by_feed
@@ -2943,11 +3081,15 @@ async function renderFeedList(){
       body.className = "feed-folder-body" + (isCollapsed ? " hidden" : "");
       sortRows(group).forEach(r=>renderRow(r, body));
 
-      header.addEventListener("click", ()=>{
-        const nowCollapsed = body.classList.toggle("hidden");
-        header.querySelector(".chevron").textContent = nowCollapsed ? "\u25B8" : "\u25BE";
-        if(nowCollapsed) collapsedFolders.add(name); else collapsedFolders.delete(name);
-        saveCollapsedFolders();
+      attachLongPress(header, {
+        onShortPress: ()=>{
+          const nowCollapsed = body.classList.toggle("hidden");
+          header.querySelector(".chevron").textContent = nowCollapsed ? "\u25B8" : "\u25BE";
+          if(nowCollapsed) collapsedFolders.add(name); else collapsedFolders.delete(name);
+          saveCollapsedFolders();
+        },
+        onLongPress: ()=>{ syncFolder(name); },
+        excludeSelector: ".folder-badge"
       });
 
       const badgeEl = header.querySelector(".folder-badge");
