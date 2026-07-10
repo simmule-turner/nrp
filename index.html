@@ -592,6 +592,16 @@ fieldset legend {
         </select>
         <label for="cfg-max-item">Max size for a single cached item (MB)</label>
         <input id="cfg-max-item" type="number" min="1" max="50" value="2">
+        <label for="cfg-max-content-size">Max content image fetch size (MB, -1 = unlimited)</label>
+        <input id="cfg-max-content-size" type="number" min="-1" step="1" value="-1">
+        <label for="cfg-max-image-size">Max thumbnail-source image fetch size (MB, -1 = unlimited)</label>
+        <input id="cfg-max-image-size" type="number" min="-1" step="1" value="8">
+        <p class="muted" style="font-size:11px; margin:.4em 0 0;">
+          These cap how much of a response NRP will actually download before giving up —
+          checked against the response's reported size up front, and against how much has
+          actually arrived as it streams in, so an oversized file gets abandoned mid-download
+          instead of being fetched in full and only then discarded for being too big to cache.
+        </p>
         <div class="row between wrap" style="margin-top:.9em; gap:.6em;">
           <span class="muted">Cached: <span id="cache-usage" class="mono-num">&mdash;</span></span>
           <button id="btn-clear-cache">Clear all cached data</button>
@@ -678,7 +688,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.38"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.40"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -697,6 +707,7 @@ const DEFAULT_CFG = {
   fsArtTitle: 22, fwArtTitle: true,
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
+  maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[], hideEmptyFeeds:false,
   toolbarPlacement: "top",
   ffFeed: "georgia",
@@ -1148,11 +1159,77 @@ async function ensureThumbnail(entry){
 // any concurrent caller for the same URL awaits and reuses that same
 // promise instead of starting a second network request.
 const assetFetchInFlight = new Map();
-async function fetchAndCacheAsset(url, account){
+
+// Converts a config value in MB (where -1 means "unlimited") to bytes
+// (where -1 continues to mean "unlimited") for use as a fetch cap.
+function mbLimitToBytes(mb){
+  if(mb === undefined || mb === null || mb === "") return -1;
+  const n = Number(mb);
+  if(!isFinite(n) || n < 0) return -1;
+  return Math.round(n * 1024 * 1024);
+}
+
+// Fetches a response with an enforced byte cap, checked both cheaply up
+// front (the Content-Length header, when present) and as the body actually
+// streams in (since servers don't always send an accurate — or any —
+// Content-Length). The download is aborted the moment the cap is exceeded
+// rather than being read to completion and only discarded afterward: e.g.
+// previously a 99MB image fetched purely to generate a small thumbnail
+// would download in full before being rejected by storeAsset() as too big
+// to cache. maxBytes <= 0 means unlimited (falls back to a plain read).
+async function fetchWithMaxSize(url, opts, maxBytes){
+  const resp = await fetch(url, opts);
+  if(!resp.ok){
+    const err = new Error("HTTP "+resp.status);
+    err.httpStatus = resp.status;
+    throw err;
+  }
+  if(!(maxBytes > 0)){
+    return await resp.blob();
+  }
+  const contentLength = resp.headers.get("content-length");
+  if(contentLength && parseInt(contentLength, 10) > maxBytes){
+    const err = new Error(`response size (${contentLength} bytes) exceeds limit (${maxBytes} bytes)`);
+    err.sizeExceeded = true;
+    err.reportedSize = parseInt(contentLength, 10);
+    throw err;
+  }
+  if(!resp.body || !resp.body.getReader){
+    // Streaming isn't available in this environment — the Content-Length
+    // check above still covers the common case; fall back to a plain read.
+    return await resp.blob();
+  }
+  const reader = resp.body.getReader();
+  let receivedBytes = 0;
+  const chunks = [];
+  while(true){
+    const {done, value} = await reader.read();
+    if(done) break;
+    receivedBytes += value.length;
+    if(receivedBytes > maxBytes){
+      try{ reader.cancel(); }catch(e){}
+      const err = new Error(`response size limit exceeded during download (> ${maxBytes} bytes)`);
+      err.sizeExceeded = true;
+      err.receivedBytes = receivedBytes;
+      throw err;
+    }
+    chunks.push(value);
+  }
+  return new Blob(chunks, {type: resp.headers.get("content-type") || undefined});
+}
+
+// requestedMaxBytes is the caller-specific ceiling (thumbnail-source images
+// use the smaller "max thumbnail-source image fetch size", full content
+// images use "max content image fetch size"; -1 means that caller has no
+// opinion). Regardless of what the caller asks for, this never bothers
+// reading past the configured per-cached-item limit either — storeAsset()
+// would reject anything larger than that anyway, so there's no point
+// downloading it in the first place just to throw it away afterward.
+async function fetchAndCacheAsset(url, account, requestedMaxBytes){
   const cached = await getCachedAsset(url);
   if(cached && cached.blob){
     touchAsset(url);
-    return {blob: cached.blob, fromCache: true};
+    return {blob: cached.blob, fromCache: true, tooLarge: false};
   }
   if(assetFetchInFlight.has(url)) return assetFetchInFlight.get(url);
   const p = (async ()=>{
@@ -1160,17 +1237,23 @@ async function fetchAndCacheAsset(url, account){
     const proxied = isDataUri
       ? {url, opts: {referrerPolicy:"no-referrer"}}
       : applyProxy(account, "nonApi", url, {referrerPolicy:"no-referrer"});
+
+    const itemCapBytes = mbLimitToBytes(CFG.maxItemSizeMB);
+    const callerCapBytes = (requestedMaxBytes === undefined) ? -1 : requestedMaxBytes;
+    const candidateCaps = [itemCapBytes, callerCapBytes].filter(b => b > 0);
+    const effectiveMaxBytes = candidateCaps.length ? Math.min(...candidateCaps) : -1;
+
     try{
-      const resp = await fetch(proxied.url, proxied.opts);
-      if(resp.ok){
-        const blob = await resp.blob();
-        try{ await storeAsset(url, blob); }
-        catch(storeErr){ if(storeErr && storeErr.tooLarge) recordOversizedImage(url, storeErr.size); }
-        return {blob, fromCache:false};
-      }
-      return {blob:null, fromCache:false};
+      const blob = await fetchWithMaxSize(proxied.url, proxied.opts, effectiveMaxBytes);
+      try{ await storeAsset(url, blob); }
+      catch(storeErr){ if(storeErr && storeErr.tooLarge) recordOversizedImage(url, storeErr.size); }
+      return {blob, fromCache:false, tooLarge:false};
     }catch(e){
-      return {blob:null, fromCache:false};
+      if(e && e.sizeExceeded){
+        recordOversizedImage(url, e.receivedBytes || e.reportedSize || effectiveMaxBytes);
+        return {blob:null, fromCache:false, tooLarge:true};
+      }
+      return {blob:null, fromCache:false, tooLarge:false};
     }
   })();
   assetFetchInFlight.set(url, p);
@@ -1192,10 +1275,14 @@ async function ensureThumbnailInner(entry){
   recordThumbDebug(`cache MISS id=${entry.id}, generating from ${imgUrl}`);
 
   const account = CFG.accounts.find(a => a.id === entry.accountId);
-  const {blob: sourceBlob, fromCache} = await fetchAndCacheAsset(imgUrl, account);
+  const {blob: sourceBlob, fromCache, tooLarge} = await fetchAndCacheAsset(imgUrl, account, mbLimitToBytes(CFG.maxImageSizeMB));
   if(!sourceBlob){
-    cacheOpaqueInBackground(imgUrl, account);
-    recordThumbDebug(`id=${entry.id} no source available this attempt`);
+    // Don't retry via the opaque no-cors fallback when we already know the
+    // source image is too large — that fallback can't enforce a byte cap,
+    // so it would just repeat the exact wasteful full download this was
+    // meant to prevent.
+    if(!tooLarge) cacheOpaqueInBackground(imgUrl, account);
+    recordThumbDebug(`id=${entry.id} no source available this attempt${tooLarge ? " (exceeded max thumbnail-source image size)" : ""}`);
     return null;
   }
   recordThumbDebug(`id=${entry.id} source = ${fromCache ? "asset cache" : "network fetch"} (${sourceBlob.size} bytes)`);
@@ -1220,13 +1307,13 @@ async function resolveImageSrc(url, entry){
   if(!url) return url;
   if(objectUrlCache.has(url)) return objectUrlCache.get(url);
   const account = entry ? CFG.accounts.find(a => a.id === entry.accountId) : null;
-  const {blob} = await fetchAndCacheAsset(url, account);
+  const {blob, tooLarge} = await fetchAndCacheAsset(url, account, mbLimitToBytes(CFG.maxContentSizeMB));
   if(blob){
     const obj = URL.createObjectURL(blob);
     objectUrlCache.set(url, obj);
     return obj;
   }
-  cacheOpaqueInBackground(url, account);
+  if(!tooLarge) cacheOpaqueInBackground(url, account);
   return url;
 }
 
@@ -1278,9 +1365,10 @@ async function prefetchImagesForEntry(entry){
     const account = CFG.accounts.find(a => a.id === entry.accountId);
     const urls = extractImageUrls(entry.content);
     if(entry.enclosureUrl) urls.push(entry.enclosureUrl);
+    const contentMaxBytes = mbLimitToBytes(CFG.maxContentSizeMB);
     for(const url of urls){
-      const {blob} = await fetchAndCacheAsset(url, account);
-      if(!blob) cacheOpaqueInBackground(url, account);
+      const {blob, tooLarge} = await fetchAndCacheAsset(url, account, contentMaxBytes);
+      if(!blob && !tooLarge) cacheOpaqueInBackground(url, account);
     }
   } finally {
     endBgTask();
@@ -2019,6 +2107,8 @@ function populateConfigForm(){
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
+  $("#cfg-max-content-size").value = (CFG.maxContentSizeMB === undefined ? -1 : CFG.maxContentSizeMB);
+  $("#cfg-max-image-size").value = (CFG.maxImageSizeMB === undefined ? 8 : CFG.maxImageSizeMB);
 
   $("#cfg-fw-feed").checked = CFG.fwFeed;
   $("#cfg-fw-art-list-title").checked = CFG.fwArtListTitle;
@@ -2627,6 +2717,10 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
   CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
   CFG.maxItemSizeMB = parseFloat($("#cfg-max-item").value) || 2;
+  CFG.maxContentSizeMB = parseFloat($("#cfg-max-content-size").value);
+  if(isNaN(CFG.maxContentSizeMB)) CFG.maxContentSizeMB = -1;
+  CFG.maxImageSizeMB = parseFloat($("#cfg-max-image-size").value);
+  if(isNaN(CFG.maxImageSizeMB)) CFG.maxImageSizeMB = 8;
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
   CFG.toolbarPlacement = $("#cfg-toolbar-placement").value;
@@ -3072,7 +3166,7 @@ async function renderArticleList(){
     row.innerHTML = `
       ${thumbHtml}
       <div class="body">
-        <div class="title">${e.starred?'<span class="star-dot">&#9733;</span>':''}${escapeHtml(e.title)}</div>
+        <div class="title">${e.starred?'<span class="star-dot">&#10084;</span>':''}${escapeHtml(e.title)}</div>
         <div class="preview" style="-webkit-line-clamp:${linesCss};">${escapeHtml(previewText)}</div>
         <div class="meta">${formatDate(e.publishedAt)} &middot; ${(e.contentSize/1024).toFixed(0)} KB</div>
       </div>`;
@@ -3174,7 +3268,7 @@ async function openArticle(entryId, opts){
 
   const starBtn = document.createElement("button");
   starBtn.className = "icon"; starBtn.setAttribute("aria-label","Star");
-  starBtn.innerHTML = entry.starred ? "\u2B50" : "\u2606";
+  starBtn.innerHTML = entry.starred ? "\u2764" : "\u{1F5A4}";
   starBtn.addEventListener("click", ()=>toggleStar());
 
   const unreadBtn = document.createElement("button");
@@ -3278,7 +3372,7 @@ async function toggleStar(){
     if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
   } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred}); }
   const starBtn = $("#top-actions button[aria-label='Star']");
-  if(starBtn) starBtn.innerHTML = currentEntry.starred ? "\u2B50" : "\u2606";
+  if(starBtn) starBtn.innerHTML = currentEntry.starred ? "\u2764" : "\u{1F5A4}";
 }
 async function sendToReadItLater(accountId){
   if(!currentEntry) return;
