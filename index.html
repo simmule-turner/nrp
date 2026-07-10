@@ -3308,7 +3308,7 @@ async function renderArticleList(){
     row.innerHTML = `
       ${thumbHtml}
       <div class="body">
-        <div class="title">${e.starred?'<span class="star-dot">&#10084;</span>':''}${escapeHtml(e.title)}</div>
+        <div class="title">${e.starred?'<span class="star-dot">❤️</span>':''}${escapeHtml(e.title)}</div>
         <div class="preview" style="-webkit-line-clamp:${linesCss};">${escapeHtml(previewText)}</div>
         <div class="meta">${formatDate(e.publishedAt)} &middot; ${(e.contentSize/1024).toFixed(0)} KB</div>
       </div>`;
@@ -3410,7 +3410,7 @@ async function openArticle(entryId, opts){
 
   const starBtn = document.createElement("button");
   starBtn.className = "icon"; starBtn.setAttribute("aria-label","Star");
-  starBtn.innerHTML = entry.starred ? "\u2764" : "\u{1F5A4}";
+  starBtn.innerHTML = entry.starred ? "❤️" : "🖤";
   starBtn.addEventListener("click", ()=>toggleStar());
 
   const unreadBtn = document.createElement("button");
@@ -3514,7 +3514,7 @@ async function toggleStar(){
     if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
   } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred}); }
   const starBtn = $("#top-actions button[aria-label='Star']");
-  if(starBtn) starBtn.innerHTML = currentEntry.starred ? "\u2764" : "\u{1F5A4}";
+  if(starBtn) starBtn.innerHTML = currentEntry.starred ? "❤️" : "🖤";
 }
 async function sendToReadItLater(accountId){
   if(!currentEntry) return;
