@@ -102,7 +102,11 @@
     -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
   }
   .feed-folder-header:active{ background:color-mix(in srgb, var(--fg) 8%, transparent); }
-  .feed-folder-header .chevron{ display:inline-block; width:1em; font-size:11px; }
+  .feed-folder-header .chevron{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:1.6em; height:1.6em; flex:0 0 auto; font-size:11px;
+    background:none; border:none; padding:0; margin:0; color:inherit; font-weight:700; cursor:pointer;
+  }
   .feed-folder-header .folder-name{ flex:0 0 auto; }
   .feed-folder-header .folder-count{ font-weight:400; text-transform:none; letter-spacing:0; }
   .feed-folder-header .grow{ flex:1; }
@@ -689,7 +693,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.41"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.42"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2135,7 +2139,7 @@ function toast(msg){
 // a desktop browser during development.
 const LONG_PRESS_MS = 550;
 function attachLongPress(el, {onShortPress, onLongPress, excludeSelector}){
-  let timer = null, firedLong = false, suppressed = false;
+  let timer = null, firedLong = false, suppressed = false, lastTouchEnd = 0;
   const start = (ev)=>{
     suppressed = !!(excludeSelector && ev.target && ev.target.closest && ev.target.closest(excludeSelector));
     if(suppressed) return;
@@ -2144,9 +2148,16 @@ function attachLongPress(el, {onShortPress, onLongPress, excludeSelector}){
     timer = setTimeout(()=>{ firedLong = true; if(onLongPress) onLongPress(); }, LONG_PRESS_MS);
   };
   const cancel = ()=>{ clearTimeout(timer); };
-  const end = ()=>{
+  const end = (ev)=>{
     clearTimeout(timer);
     if(suppressed) return;
+    if(ev.type === "touchend") lastTouchEnd = Date.now();
+    // A tap on a touchscreen fires touchend AND, shortly after, a synthetic
+    // mouseup for the same physical gesture (standard browser compat
+    // behavior). Without this guard both would call onShortPress, toggling
+    // straight back to the starting state — which looks exactly like the
+    // tap did nothing.
+    if(ev.type === "mouseup" && Date.now() - lastTouchEnd < 800) return;
     if(!firedLong && onShortPress) onShortPress();
   };
   el.addEventListener("touchstart", start, {passive:true});
@@ -3071,7 +3082,7 @@ async function renderFeedList(){
 
       const header = document.createElement("div"); header.className = "feed-folder-header";
       header.innerHTML = `
-        <span class="chevron">${isCollapsed ? "\u25B8" : "\u25BE"}</span>
+        <button type="button" class="chevron" aria-label="Expand or collapse folder">${isCollapsed ? "\u25B8" : "\u25BE"}</button>
         <span class="folder-name">${escapeHtml(name)}</span>
         <span class="folder-count grow">${group.length} feed${group.length!==1?"s":""}</span>
         ${folderUnread>0 ? `<span class="badge mono-num folder-badge" title="Read all unread in ${escapeAttr(name)}" style="cursor:pointer;">${folderUnread}</span>` : ""}
@@ -3081,15 +3092,20 @@ async function renderFeedList(){
       body.className = "feed-folder-body" + (isCollapsed ? " hidden" : "");
       sortRows(group).forEach(r=>renderRow(r, body));
 
+      const toggleFolderCollapse = ()=>{
+        const nowCollapsed = body.classList.toggle("hidden");
+        header.querySelector(".chevron").textContent = nowCollapsed ? "\u25B8" : "\u25BE";
+        if(nowCollapsed) collapsedFolders.add(name); else collapsedFolders.delete(name);
+        saveCollapsedFolders();
+      };
+      header.querySelector(".chevron").addEventListener("click", (ev)=>{
+        ev.stopPropagation();
+        toggleFolderCollapse();
+      });
       attachLongPress(header, {
-        onShortPress: ()=>{
-          const nowCollapsed = body.classList.toggle("hidden");
-          header.querySelector(".chevron").textContent = nowCollapsed ? "\u25B8" : "\u25BE";
-          if(nowCollapsed) collapsedFolders.add(name); else collapsedFolders.delete(name);
-          saveCollapsedFolders();
-        },
+        onShortPress: toggleFolderCollapse,
         onLongPress: ()=>{ syncFolder(name); },
-        excludeSelector: ".folder-badge"
+        excludeSelector: ".folder-badge, .chevron"
       });
 
       const badgeEl = header.querySelector(".folder-badge");
