@@ -678,7 +678,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.37"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.38"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1541,7 +1541,6 @@ async function nbGetFeeds(account){
 // account's configured "max items per feed/sync", page through with
 // page=1,2,3... (order=newest, read_filter=unread so we only pull pages
 // of unread content, include_story_content=true since NRP needs the full
-// body) until either maxItems is reached or a page comes back empty.
 // Two-phase sync to minimize data transfer:
 //  Phase 1 (cheap): page through with include_story_content=false — per
 //    NewsBlur's own API docs, this is specifically meant for "just checking
@@ -1553,6 +1552,21 @@ async function nbGetFeeds(account){
 //    having something new, and drop anything in them that turned out to
 //    already be known. Pages that were entirely redundant never have their
 //    full content downloaded at all.
+//
+// A single failed page fetch (nbFetch swallows network/HTTP errors into
+// {error:true}) used to silently end pagination right there — a transient
+// proxy hiccup on, say, page 2 would look identical to "there is no page 2",
+// truncating a sync with zero visible indication anything went wrong beyond
+// a debug-log line. Each page fetch below is retried once before being
+// treated as a real stop condition.
+async function nbFetchPageWithRetry(account, path){
+    let res = await nbFetch(account, path);
+    if(res.error){
+        await new Promise(r=>setTimeout(r, 800));
+        res = await nbFetch(account, path);
+    }
+    return res;
+}
 async function nbGetUnreadEntries(account, feedId, knownRawIds){
     knownRawIds = knownRawIds || new Set();
     const maxNeeded = account.maxItems || 50;
@@ -1561,9 +1575,9 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds){
     let neededPages = [];
     let newCount = 0;
     for(let page = 1; page <= MAX_PAGES && newCount < maxNeeded; page++){
-        const res = await nbFetch(account, `/reader/feed/${feedId}?page=${page}&order=newest&read_filter=unread&include_story_content=false`);
+        const res = await nbFetchPageWithRetry(account, `/reader/feed/${feedId}?page=${page}&order=newest&read_filter=unread&include_story_content=false`);
         if(res.error){
-            debug(`NewsBlur check-pass page ${page} failed for feed=${feedId}: ${res.message}`);
+            debug(`NewsBlur check-pass page ${page} failed for feed=${feedId} (after retry): ${res.message} — stopping pagination here, sync may be incomplete`);
             break;
         }
         const pageStories = res.stories || [];
@@ -1574,7 +1588,7 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds){
         // genuinely-unread stories exist further in. Only stop once both
         // the visible list AND hidden_stories_count are exhausted.
         const hiddenCount = res.hidden_stories_count || 0;
-        debug(`NewsBlur check-pass: feed=${feedId} page ${page} returned ${pageStories.length} stories, hidden_stories_count=${hiddenCount}`);
+        debug(`NewsBlur check-pass: feed=${feedId} page ${page} returned ${pageStories.length} stories, hidden_stories_count=${hiddenCount}, maxNeeded=${maxNeeded}, newCount-so-far=${newCount}`);
         if(pageStories.length === 0 && hiddenCount === 0) break; // genuinely done
 
         const newOnPage = pageStories.filter(s => !knownRawIds.has(s.story_hash));
@@ -1594,9 +1608,9 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds){
     let feedsMeta = null;
     for(const page of neededPages){
         if(stories.length >= maxNeeded) break;
-        const res = await nbFetch(account, `/reader/feed/${feedId}?page=${page}&order=newest&read_filter=unread&include_story_content=true`);
+        const res = await nbFetchPageWithRetry(account, `/reader/feed/${feedId}?page=${page}&order=newest&read_filter=unread&include_story_content=true`);
         if(res.error){
-            debug(`NewsBlur content-pass page ${page} failed for feed=${feedId}: ${res.message}`);
+            debug(`NewsBlur content-pass page ${page} failed for feed=${feedId} (after retry): ${res.message}`);
             break;
         }
         if(!feedsMeta) feedsMeta = res.feeds;
