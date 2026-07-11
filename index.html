@@ -695,7 +695,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.45"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.47"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2123,6 +2123,8 @@ function saveLastArticleView(entry){
       entryId: entry.id,
       feedUid: currentFeedUid,
       folderName: currentFolderName,
+      filter: articleFilter,
+      order: lastArticleOrder,
       ts: Date.now()
     }));
   }catch(e){}
@@ -3632,11 +3634,41 @@ async function init(){
       navStack = []; lastOpts = {title:"Feeds"};
       showScreen("screen-feeds", {title:"Feeds"});
       await renderFeedList();
+      // Restore the tab the user was actually browsing (this is what
+      // pressing Back from the article will show — a fresh, live-filtered
+      // list, which correctly no longer includes this entry if it's since
+      // been marked read, same as normal app behavior any other time you
+      // read an article from the unread tab and go back).
+      if(lastArticle.filter) articleFilter = lastArticle.filter;
+
+      // Deliberately not calling openArticleList()/openArticleListForFolder()
+      // here: both fire off renderArticleList() without awaiting it, which
+      // would race the lastArticleOrder restore below (that unawaited call
+      // could finish after this code runs and clobber it back to a fresh,
+      // live-filtered value — silently re-breaking the exact bug this is
+      // fixing). The article-list screen's own DOM is left unpopulated for
+      // now; it gets rendered on demand, correctly, the moment the user
+      // actually presses Back (the existing back-button handler already
+      // calls renderArticleList() for screen-articles).
       if(lastArticle.feedUid){
         const f = CFG.selectedFeeds.find(x=>x.id===lastArticle.feedUid);
-        if(f) openArticleList(f.id, f.title);
+        if(f){
+          currentFeedUid = f.id;
+          currentFolderName = null;
+          navigate("screen-articles", {title: f.title});
+          document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
+        }
       }else if(lastArticle.folderName){
-        openArticleListForFolder(lastArticle.folderName);
+        currentFeedUid = null;
+        currentFolderName = lastArticle.folderName;
+        navigate("screen-articles", {title: "[" + lastArticle.folderName + "]"});
+        document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.filter===articleFilter));
+      }
+      // Restore the exact browsing-order snapshot captured at the moment
+      // this article was originally opened, so Next/Prev continue through
+      // the same session instead of whatever a fresh re-filter would show.
+      if(lastArticle.order && lastArticle.order.includes(lastArticle.entryId)){
+        lastArticleOrder = lastArticle.order;
       }
       await openArticle(lastArticle.entryId);
       refreshCounters();
