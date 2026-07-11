@@ -695,7 +695,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.43"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.44"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2989,6 +2989,7 @@ async function syncFolder(folderName){
   const feeds = CFG.selectedFeeds.filter(f => (f.folderName || "Unfiled") === folderName);
   if(feeds.length === 0) return;
   if(navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
+  if(!confirm(`Sync "${folderName}"?`)) return;
   toast(`Syncing "${folderName}"\u2026`);
   await syncFeedList(feeds, ()=>{ renderFeedList(); });
   await renderFeedList();
@@ -3151,6 +3152,7 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
     pulling = false;
     const dy = (e.changedTouches[0].clientY - startY);
     if(dy > 70){
+      if(!confirm(`Sync "all"?`)){ indicator.textContent = ""; return; }
       indicator.textContent = "Refreshing\u2026";
       await syncAllFeeds(()=>{ renderFeedList(); });
       await renderFeedList();
