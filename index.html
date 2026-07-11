@@ -104,8 +104,13 @@
   .feed-folder-header:active{ background:color-mix(in srgb, var(--fg) 8%, transparent); }
   .feed-folder-header .chevron{
     display:inline-flex; align-items:center; justify-content:center;
-    width:2.4em; height:2.4em; flex:0 0 auto; font-size:18px;
+    width:1.6em; height:1.6em; flex:0 0 auto; font-size:11px;
     background:none; border:none; padding:0; margin:0; color:inherit; font-weight:700; cursor:pointer;
+  transform: scale(1.9);
+  transform-origin: center center; /* Keeps it perfectly centered in its grid cell */
+  position: relative;
+  top: 2px; /* Increase this value (e.g., 3px, 4px) until it looks perfectly centered */
+
   }
   .feed-folder-header .folder-name{ flex:0 0 auto; }
   .feed-folder-header .folder-count{ font-weight:400; text-transform:none; letter-spacing:0; }
