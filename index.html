@@ -695,7 +695,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.44"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.45"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2086,6 +2086,14 @@ function showScreen(id, opts){
   opts = opts || {};
   screens.forEach(s=>$("#"+s).classList.toggle("hidden", s!==id));
   currentScreen = id;
+  // Tracked separately from in-memory nav state (see openArticle /
+  // loadLastArticleView) so the app can recover the article the user was
+  // just reading even if the whole page gets reloaded from scratch — e.g.
+  // tapping an external link and closing/backing out of the browser it
+  // opens can, on some platforms (notably iOS home-screen PWAs), reload
+  // this app rather than just returning focus to it, wiping every bit of
+  // in-memory navigation state.
+  if(id !== "screen-article") clearLastArticleView();
   $("#btn-back").classList.toggle("hidden", navStack.length===0);
   $("#btn-top-save").classList.toggle("hidden", id !== "screen-config"); // Toggle Toolbar save
   $("#btn-config").classList.toggle("hidden", id === "screen-config");
@@ -2106,6 +2114,36 @@ function updateScreen(id, opts){
   lastOpts = opts; showScreen(id, opts);
 }
 let lastOpts = {};
+
+const LAST_ARTICLE_KEY = "nrp_last_article_view";
+const LAST_ARTICLE_RESTORE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+function saveLastArticleView(entry){
+  try{
+    localStorage.setItem(LAST_ARTICLE_KEY, JSON.stringify({
+      entryId: entry.id,
+      feedUid: currentFeedUid,
+      folderName: currentFolderName,
+      ts: Date.now()
+    }));
+  }catch(e){}
+}
+function clearLastArticleView(){
+  try{ localStorage.removeItem(LAST_ARTICLE_KEY); }catch(e){}
+}
+// Only honored within a short window of being saved — this is meant to
+// recover from an abrupt reload while actively reading an article, not to
+// jump a user back into something from days ago on a routine app open.
+function loadLastArticleView(){
+  try{
+    const raw = localStorage.getItem(LAST_ARTICLE_KEY);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || !parsed.entryId || !parsed.ts) return null;
+    if(Date.now() - parsed.ts > LAST_ARTICLE_RESTORE_WINDOW_MS) return null;
+    return parsed;
+  }catch(e){ return null; }
+}
+
 $("#btn-back").addEventListener("click", ()=>{
   const prev = navStack.pop();
   if(!prev) return;
@@ -3427,7 +3465,8 @@ async function openArticle(entryId, opts){
   const entry = await getEntry(entryId);
   if(!entry) return;
   currentEntry = entry;
-
+  saveLastArticleView(entry);
+  
   const starBtn = document.createElement("button");
   starBtn.className = "icon"; starBtn.setAttribute("aria-label","Star");
   starBtn.innerHTML = entry.starred ? "❤️" : "🖤";
@@ -3582,6 +3621,28 @@ async function init(){
   }
 
   processOutbox();
+
+  // Captured before any showScreen() call, since showScreen() clears this
+  // as a side effect once we've navigated away from screen-article — see
+  // the comment in showScreen() for why this exists.
+  const lastArticle = loadLastArticleView();
+  if(lastArticle){
+    const entry = await getEntry(lastArticle.entryId);
+    if(entry){
+      navStack = []; lastOpts = {title:"Feeds"};
+      showScreen("screen-feeds", {title:"Feeds"});
+      await renderFeedList();
+      if(lastArticle.feedUid){
+        const f = CFG.selectedFeeds.find(x=>x.id===lastArticle.feedUid);
+        if(f) openArticleList(f.id, f.title);
+      }else if(lastArticle.folderName){
+        openArticleListForFolder(lastArticle.folderName);
+      }
+      await openArticle(lastArticle.entryId);
+      refreshCounters();
+      return;
+    }
+  }
 
   if(CFG.startupMode && CFG.startupMode !== "feedlist"){
     const f = CFG.selectedFeeds.find(x=>x.id===CFG.startupMode);
