@@ -2,6 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// Applied here — before any of <body> exists, let alone paints — to avoid
+// a flash of the wrong toolbar position on load. Toggling this class later
+// (once the main script runs applyTheme(), which happens after the browser
+// has already parsed and started painting the default top-toolbar layout)
+// means rendering it once in the wrong place and then visibly reflowing it,
+// which is exactly the glitch this is meant to prevent. This is a tiny,
+// synchronous, best-effort read of just the one setting needed for that —
+// applyTheme() still runs normally afterward and keeps this in sync with
+// any later change to the setting.
+try{
+  var __cfgRaw = localStorage.getItem("nrp_config");
+  if(__cfgRaw && JSON.parse(__cfgRaw).toolbarPlacement === "bottom"){
+    document.documentElement.classList.add("toolbar-bottom");
+  }
+}catch(e){}
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>NRP</title>
 <meta name="theme-color" content="#15171A">
@@ -180,18 +197,18 @@
     background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px;
     font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;
   }
-  body.toolbar-bottom .bg-task-indicator{ bottom:6.5em; }
+  html.toolbar-bottom .bg-task-indicator{ bottom:6.5em; }
 
   /* Toolbar placement config */
-  body.toolbar-bottom .topbar {
+  html.toolbar-bottom .topbar {
     order: 2;
     border-bottom: none;
     border-top: 1px solid var(--border);
   }
-  body.toolbar-bottom .screen {
+  html.toolbar-bottom .screen {
     order: 1;
   }
-  body.toolbar-bottom .toast {
+  html.toolbar-bottom .toast {
     bottom: 4.5em; /* Shift toast above the bottom toolbar */
   }
 
@@ -723,7 +740,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.55"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.56"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -867,7 +884,7 @@ function applyTheme(){
 
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute("content", colors.bg);
-  document.body.classList.toggle("toolbar-bottom", CFG.toolbarPlacement === "bottom");
+  document.documentElement.classList.toggle("toolbar-bottom", CFG.toolbarPlacement === "bottom");
 }
 
 if (window.matchMedia) {
