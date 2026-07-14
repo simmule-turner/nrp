@@ -695,7 +695,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.47"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.50"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1461,8 +1461,13 @@ async function processOutbox(){
       }
       await tx("outbox","readwrite", store=>store.delete(item.seq));
     }catch(e){
+      // Deliberately not aborting the whole queue here: this item just stays
+      // in the outbox for the next retry (same as before), but later items —
+      // very possibly for a different account or of a different type
+      // entirely — still get their turn this pass instead of being blocked
+      // behind one stuck item indefinitely.
+      debug(`Outbox item still failing (type=${item.type}, seq=${item.seq}): ${e && e.message}`);
       if(item.type === "rl-save") rlLog(`Outbox retry still failing for ${item.url}: ${e && e.message}`);
-      break;
     }
   }
 }
@@ -1470,25 +1475,42 @@ window.addEventListener("online", ()=>{ processOutbox(); });
 
 /* ============================= API ABSTRACTIONS ============================= */
 
+// Registry/adapter pattern: one entry per reader backend implementing a
+// common shape, so the four API entry points below are thin one-line
+// dispatchers instead of hardcoded if/if/throw chains. Adding a third
+// backend means adding one adapter entry here, not editing four functions.
+const READER_ADAPTERS = {
+  miniflux: {
+    label: "Miniflux",
+    getFeeds: (account) => mfGetFeeds(account),
+    getUnreadEntries: (account, rawFeedId, knownRawIds, contentMode) => mfGetUnreadEntries(account, rawFeedId, knownRawIds),
+    markStatus: (account, rawEntryIds, status, rawFeedId) => mfMarkStatus(account, rawEntryIds, status),
+    toggleBookmark: (account, rawEntryId, rawFeedId, isStarred) => mfSetStarred(account, rawEntryId, isStarred)
+  },
+  newsblur: {
+    label: "NewsBlur",
+    getFeeds: (account) => nbGetFeeds(account),
+    getUnreadEntries: (account, rawFeedId, knownRawIds, contentMode) => nbGetUnreadEntries(account, rawFeedId, knownRawIds, contentMode),
+    markStatus: (account, rawEntryIds, status, rawFeedId) => nbMarkStatus(account, rawEntryIds, status, rawFeedId),
+    toggleBookmark: (account, rawEntryId, rawFeedId, isStarred) => nbToggleBookmark(account, rawEntryId, rawFeedId, isStarred)
+  }
+};
+function readerAdapter(account){
+  const a = READER_ADAPTERS[account.type];
+  if(!a) throw new Error("Unknown account type");
+  return a;
+}
 async function apiGetFeeds(account) {
-  if (account.type === 'miniflux') return mfGetFeeds(account);
-  if (account.type === 'newsblur') return nbGetFeeds(account);
-  throw new Error("Unknown account type");
+  return readerAdapter(account).getFeeds(account);
 }
 async function apiGetUnreadEntries(account, rawFeedId, knownRawIds, contentMode) {
-  if (account.type === 'miniflux') return mfGetUnreadEntries(account, rawFeedId, knownRawIds);
-  if (account.type === 'newsblur') return nbGetUnreadEntries(account, rawFeedId, knownRawIds, contentMode);
-  throw new Error("Unknown account type");
+  return readerAdapter(account).getUnreadEntries(account, rawFeedId, knownRawIds, contentMode);
 }
 async function apiMarkStatus(account, rawEntryIds, status, rawFeedId) {
-  if (account.type === 'miniflux') return mfMarkStatus(account, rawEntryIds, status);
-  if (account.type === 'newsblur') return nbMarkStatus(account, rawEntryIds, status, rawFeedId);
-  throw new Error("Unknown account type");
+  return readerAdapter(account).markStatus(account, rawEntryIds, status, rawFeedId);
 }
 async function apiToggleBookmark(account, rawEntryId, rawFeedId, isStarred) {
-  if (account.type === 'miniflux') return mfSetStarred(account, rawEntryId, isStarred);
-  if (account.type === 'newsblur') return nbToggleBookmark(account, rawEntryId, rawFeedId, isStarred);
-  throw new Error("Unknown account type");
+  return readerAdapter(account).toggleBookmark(account, rawEntryId, rawFeedId, isStarred);
 }
 
 /* ============================= MINIFLUX API ============================= */
@@ -1777,17 +1799,31 @@ async function nbMarkStatus(account, entryIds, status, rawFeedId){
             body: data,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
-    } else {
+    }
+    // NewsBlur's mark-unread endpoint only accepts a single story per
+    // request (unlike its bulk mark-read endpoint above) — this used to
+    // just process entryIds[0] and silently ignore the rest, which happened
+    // to be safe only because every current caller already passes exactly
+    // one id. Looping here makes the function itself correct for any number
+    // of entries, rather than depending on that always being true.
+    let lastResult = null;
+    for(const entryId of entryIds){
         const data = new URLSearchParams();
-        const [fId, sId] = entryIds[0].split(':');
-        data.append("story_id", sId || entryIds[0]);
-        data.append("feed_id", rawFeedId || fId);
-        return nbFetch(account, "/reader/mark_story_as_unread", {
+        // Each story_hash already encodes its own feed id ("feedId:storyId"),
+        // which is the only value that's guaranteed correct per-entry if a
+        // future caller ever passes entries from more than one feed in the
+        // same array — rawFeedId (a single value for the whole call) is only
+        // a fallback for the rare case an id doesn't parse into both parts.
+        const [fId, sId] = entryId.split(':');
+        data.append("story_id", sId || entryId);
+        data.append("feed_id", fId || rawFeedId);
+        lastResult = await nbFetch(account, "/reader/mark_story_as_unread", {
             method: "POST",
             body: data,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
     }
+    return lastResult;
 }
 
 async function nbToggleBookmark(account, entryId, rawFeedId, isStarred){
@@ -1861,11 +1897,31 @@ function prepareContentForReadItLater(entry){
   return {html, imageUrls};
 }
 
+// Same registry/adapter pattern as READER_ADAPTERS above, for the two
+// read-it-later backends. rilLabel() replaces the
+// `type === "wallabag" ? "Wallabag" : "Readeck"` ternary that used to be
+// duplicated at every call site that needed a human-readable fallback name.
+const RIL_ADAPTERS = {
+  wallabag: {
+    label: "Wallabag",
+    save: (account, entry, prepared) => wbSaveEntry(account, entry.title, prepared.html, entry.url)
+  },
+  readeck: {
+    label: "Readeck",
+    save: (account, entry, prepared) => rdSaveEntry(account, entry.title, prepared.html, entry.url, prepared.imageUrls)
+  }
+};
+function rilAdapter(account){
+  const a = RIL_ADAPTERS[account.type];
+  if(!a) throw new Error("Unknown read-it-later account type");
+  return a;
+}
+function rilLabel(account){
+  return account.name || (RIL_ADAPTERS[account.type] ? RIL_ADAPTERS[account.type].label : account.type);
+}
 async function rilSaveEntry(account, entry){
   const prepared = prepareContentForReadItLater(entry);
-  if(account.type === "wallabag") return wbSaveEntry(account, entry.title, prepared.html, entry.url);
-  if(account.type === "readeck") return rdSaveEntry(account, entry.title, prepared.html, entry.url, prepared.imageUrls);
-  throw new Error("Unknown read-it-later account type");
+  return rilAdapter(account).save(account, entry, prepared);
 }
 
 /* ============================= WALLABAG API ============================= */
@@ -2211,6 +2267,49 @@ function attachLongPress(el, {onShortPress, onLongPress, excludeSelector}){
   el.addEventListener("mouseleave", cancel);
 }
 
+// Generic small positioned popup menu: a list of clickable option buttons,
+// anchored near anchorEl, dismissed on an outside click. Shared by
+// showRilAccountMenu (send-to destination picker) and showContentModeMenu
+// (NewsBlur Feed/Text/Original view picker) — previously each reimplemented
+// this independently (positioned div, option buttons, close-on-outside-click).
+// align:"right" anchors the menu's right edge to the anchor's right edge
+// (used when the anchor sits near the right of the screen, e.g. a toolbar
+// button); default anchors the menu's left edge to the anchor's left edge.
+function showPopupMenu({id, anchorEl, items, align, minWidth}){
+  const existing = document.getElementById(id);
+  if(existing) existing.remove();
+
+  const menu = document.createElement("div");
+  menu.id = id;
+  menu.style.cssText = `position:fixed; z-index:100; background:var(--bg); border:1px solid var(--border); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.3); min-width:${minWidth||170}px; overflow:hidden;`;
+
+  const rect = anchorEl ? anchorEl.getBoundingClientRect() : {bottom:56, left:8, right:window.innerWidth-8};
+  const estimatedHeight = items.length * 40 + 20;
+  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - estimatedHeight) + "px";
+  if(align === "right"){
+    menu.style.right = Math.max(window.innerWidth - rect.right, 8) + "px";
+  }else{
+    menu.style.left = Math.max(Math.min(rect.left, window.innerWidth - (minWidth||170) - 10), 8) + "px";
+  }
+
+  items.forEach(({label, title, onClick})=>{
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    if(title) item.title = title;
+    item.style.cssText = "display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:.8em 1em; min-height:auto; font-weight:500;";
+    item.addEventListener("click", ()=>{ menu.remove(); onClick(); });
+    menu.appendChild(item);
+  });
+
+  document.body.appendChild(menu);
+  setTimeout(()=>{
+    document.addEventListener("click", function closeMenu(ev){
+      if(!menu.contains(ev.target)){ menu.remove(); document.removeEventListener("click", closeMenu); }
+    });
+  }, 0);
+}
+
 /* ============================= CONFIG SCREEN LOGIC ============================= */
 function populateConfigForm(){
   renderAccountsList();
@@ -2291,14 +2390,8 @@ $("#btn-add-account").addEventListener("click", () => {
   $("#acc-url").value = "";
   $("#acc-token").value = "";
   $("#acc-max").value = "25";
-  $("#acc-api-proxy-enabled").checked = false;
-  $("#acc-api-proxy-url").value = "";
-  $("#acc-api-proxy-headers-enabled").checked = false;
-  renderProxyHeaderRows("acc-api-proxy-headers-list", []);
-  $("#acc-nonapi-proxy-enabled").checked = false;
-  $("#acc-nonapi-proxy-url").value = "";
-  $("#acc-nonapi-proxy-headers-enabled").checked = false;
-  renderProxyHeaderRows("acc-nonapi-proxy-headers-list", []);
+  populateProxyFields("acc-api-proxy", "api", null);
+  populateProxyFields("acc-nonapi-proxy", "nonApi", null);
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
@@ -2342,6 +2435,27 @@ function collectProxyHeaders(containerId){
   });
   return out;
 }
+// A proxy sub-form always has the same four fields (enabled checkbox, URL,
+// send-custom-headers checkbox, header rows), just under different DOM id
+// prefixes and different CFG key prefixes depending on which proxy it is:
+// reader accounts have two ("acc-api-proxy" -> "api", "acc-nonapi-proxy" ->
+// "nonApi"), read-it-later accounts have one ("rl-proxy" -> "api"). These
+// two helpers read/populate that shape generically instead of each account
+// form repeating the same four lines per proxy section by hand.
+function readProxyFields(domPrefix, configPrefix){
+  return {
+    [configPrefix+"ProxyEnabled"]: $("#"+domPrefix+"-enabled").checked,
+    [configPrefix+"ProxyUrl"]: $("#"+domPrefix+"-url").value.trim(),
+    [configPrefix+"ProxyHeadersEnabled"]: $("#"+domPrefix+"-headers-enabled").checked,
+    [configPrefix+"ProxyHeaders"]: collectProxyHeaders(domPrefix+"-headers-list")
+  };
+}
+function populateProxyFields(domPrefix, configPrefix, acc){
+  $("#"+domPrefix+"-enabled").checked = !!(acc && acc[configPrefix+"ProxyEnabled"]);
+  $("#"+domPrefix+"-url").value = (acc && acc[configPrefix+"ProxyUrl"]) || "";
+  $("#"+domPrefix+"-headers-enabled").checked = !!(acc && acc[configPrefix+"ProxyHeadersEnabled"]);
+  renderProxyHeaderRows(domPrefix+"-headers-list", (acc && acc[configPrefix+"ProxyHeaders"]) || []);
+}
 $("#acc-api-proxy-add-header").addEventListener("click", ()=>createHeaderRow("acc-api-proxy-headers-list","",""));
 $("#acc-nonapi-proxy-add-header").addEventListener("click", ()=>createHeaderRow("acc-nonapi-proxy-headers-list","",""));
 $("#rl-proxy-add-header").addEventListener("click", ()=>createHeaderRow("rl-proxy-headers-list","",""));
@@ -2360,14 +2474,8 @@ $("#btn-save-account").addEventListener("click", () => {
     name: $("#acc-name").value.trim() || $("#acc-type").value,
     url: $("#acc-url").value.trim(),
     maxItems: parseInt($("#acc-max").value, 10) || 50,
-    apiProxyEnabled: $("#acc-api-proxy-enabled").checked,
-    apiProxyUrl: $("#acc-api-proxy-url").value.trim(),
-    apiProxyHeadersEnabled: $("#acc-api-proxy-headers-enabled").checked,
-    apiProxyHeaders: collectProxyHeaders("acc-api-proxy-headers-list"),
-    nonApiProxyEnabled: $("#acc-nonapi-proxy-enabled").checked,
-    nonApiProxyUrl: $("#acc-nonapi-proxy-url").value.trim(),
-    nonApiProxyHeadersEnabled: $("#acc-nonapi-proxy-headers-enabled").checked,
-    nonApiProxyHeaders: collectProxyHeaders("acc-nonapi-proxy-headers-list")
+    ...readProxyFields("acc-api-proxy", "api"),
+    ...readProxyFields("acc-nonapi-proxy", "nonApi")
   };
   if(acc.type === "miniflux") { acc.token = $("#acc-token").value.trim(); }
   if(acc.type === "newsblur" && (!acc.apiProxyEnabled || !acc.apiProxyUrl)){
@@ -2392,13 +2500,8 @@ window.editAccount = (id) => {
   $("#acc-url").value = acc.url;
   $("#acc-max").value = acc.maxItems;
   $("#acc-token").value = acc.token || "";
-  $("#acc-api-proxy-enabled").checked = !!acc.apiProxyEnabled;  $("#acc-api-proxy-url").value = acc.apiProxyUrl || "";
-  $("#acc-api-proxy-headers-enabled").checked = !!acc.apiProxyHeadersEnabled;
-  renderProxyHeaderRows("acc-api-proxy-headers-list", acc.apiProxyHeaders || []);
-  $("#acc-nonapi-proxy-enabled").checked = !!acc.nonApiProxyEnabled;
-  $("#acc-nonapi-proxy-url").value = acc.nonApiProxyUrl || "";
-  $("#acc-nonapi-proxy-headers-enabled").checked = !!acc.nonApiProxyHeadersEnabled;
-  renderProxyHeaderRows("acc-nonapi-proxy-headers-list", acc.nonApiProxyHeaders || []);
+  populateProxyFields("acc-api-proxy", "api", acc);
+  populateProxyFields("acc-nonapi-proxy", "nonApi", acc);
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
@@ -2428,7 +2531,7 @@ function renderRlAccountsList() {
     return;
   }
   CFG.readItLaterAccounts.forEach(acc => {
-    const typeLabel = acc.type === "wallabag" ? "Wallabag" : "Readeck";
+    const typeLabel = RIL_ADAPTERS[acc.type].label;
     const row = document.createElement("div");
     row.className = "account-item";
     row.innerHTML = `
@@ -2456,10 +2559,7 @@ $("#btn-add-rl-account").addEventListener("click", () => {
   $("#rl-wb-password").value = "";
   $("#rl-rd-token").value = "";
   $("#rl-rd-send-content").checked = true;
-  $("#rl-proxy-enabled").checked = false;
-  $("#rl-proxy-url").value = "";
-  $("#rl-proxy-headers-enabled").checked = false;
-  renderProxyHeaderRows("rl-proxy-headers-list", []);
+  populateProxyFields("rl-proxy", "api", null);
   $("#rl-type").dispatchEvent(new Event("change"));
   $("#rl-account-form").classList.remove("hidden");
   $("#btn-add-rl-account").classList.add("hidden");
@@ -2486,15 +2586,12 @@ $("#btn-save-rl-account").addEventListener("click", () => {
   const acc = {
     id: id,
     type: type,
-    name: $("#rl-name").value.trim() || (type === "wallabag" ? "Wallabag" : "Readeck"),
+    name: $("#rl-name").value.trim() || RIL_ADAPTERS[type].label,
     url: url,
     accessToken: existing.accessToken || null,
     refreshToken: existing.refreshToken || null,
     tokenExpiry: existing.tokenExpiry || 0,
-    apiProxyEnabled: $("#rl-proxy-enabled").checked,
-    apiProxyUrl: $("#rl-proxy-url").value.trim(),
-    apiProxyHeadersEnabled: $("#rl-proxy-headers-enabled").checked,
-    apiProxyHeaders: collectProxyHeaders("rl-proxy-headers-list")
+    ...readProxyFields("rl-proxy", "api")
   };
   if(type === "wallabag"){
     acc.clientId = $("#rl-wb-client-id").value.trim();
@@ -2529,10 +2626,7 @@ window.editRlAccount = (id) => {
   $("#rl-wb-password").value = acc.password || "";
   $("#rl-rd-token").value = acc.apiToken || "";
   $("#rl-rd-send-content").checked = acc.sendFullContent !== false;
-  $("#rl-proxy-enabled").checked = !!acc.apiProxyEnabled;
-  $("#rl-proxy-url").value = acc.apiProxyUrl || "";
-  $("#rl-proxy-headers-enabled").checked = !!acc.apiProxyHeadersEnabled;
-  renderProxyHeaderRows("rl-proxy-headers-list", acc.apiProxyHeaders || []);
+  populateProxyFields("rl-proxy", "api", acc);
   $("#rl-type").dispatchEvent(new Event("change"));
   $("#rl-account-form").classList.remove("hidden");
   $("#btn-add-rl-account").classList.add("hidden");
@@ -2707,42 +2801,21 @@ $("#btn-deselect-all").addEventListener("click", () => {
 // setting, implemented client-side here since it drives what NRP itself
 // requests on sync rather than a NewsBlur-side display preference.
 function showContentModeMenu(f, anchorEl){
-  const existing = document.getElementById("content-mode-menu");
-  if(existing) existing.remove();
-
-  const menu = document.createElement("div");
-  menu.id = "content-mode-menu";
-  menu.style.cssText = "position:fixed; z-index:100; background:var(--bg); border:1px solid var(--border); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.3); min-width:200px; overflow:hidden;";
-  const rect = anchorEl.getBoundingClientRect();
-  const top = Math.min(rect.bottom + 4, window.innerHeight - 150);
-  const left = Math.max(Math.min(rect.left, window.innerWidth - 210), 8);
-  menu.style.top = top + "px";
-  menu.style.left = left + "px";
-
   const options = [
     {value:"default", label:"Feed view (default)"},
     {value:"original_text", label:"Text view (original_text)"},
     {value:"original_story", label:"Original view (original_story)"}
   ];
   const current = f.contentMode || "default";
-  options.forEach(opt=>{
-    const item = document.createElement("button");
-    item.textContent = (current === opt.value ? "\u2713 " : "\u2003\u2002") + opt.label;
-    item.style.cssText = "display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:.8em 1em; min-height:auto; font-weight:500;";
-    item.addEventListener("click", ()=>{
-      f.contentMode = opt.value;
-      menu.remove();
-      renderFeedPicker();
-    });
-    menu.appendChild(item);
+  showPopupMenu({
+    id: "content-mode-menu",
+    anchorEl,
+    minWidth: 200,
+    items: options.map(opt => ({
+      label: (current === opt.value ? "\u2713 " : "\u2003\u2002") + opt.label,
+      onClick: ()=>{ f.contentMode = opt.value; renderFeedPicker(); }
+    }))
   });
-
-  document.body.appendChild(menu);
-  setTimeout(()=>{
-    document.addEventListener("click", function closeMenu(ev){
-      if(!menu.contains(ev.target)){ menu.remove(); document.removeEventListener("click", closeMenu); }
-    });
-  }, 0);
 }
 
 function renderFeedPicker(){
@@ -3431,35 +3504,16 @@ function findLinkTarget(contentDiv, entry){
 /* Read-it-later account picker menu (used when more than one account is
    configured, so the user chooses a destination at send time). */
 function showRilAccountMenu(accounts, anchorEl){
-  const existing = document.getElementById("ril-account-menu");
-  if(existing) existing.remove();
-
-  const menu = document.createElement("div");
-  menu.id = "ril-account-menu";
-  menu.style.cssText = "position:fixed; z-index:100; background:var(--bg); border:1px solid var(--border); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.3); min-width:170px; overflow:hidden;";
-
-  const rect = anchorEl ? anchorEl.getBoundingClientRect() : {bottom:56, right:window.innerWidth-10};
-  const top = Math.min(rect.bottom + 4, window.innerHeight - 60);
-  const right = Math.max(window.innerWidth - rect.right, 8);
-  menu.style.top = top + "px";
-  menu.style.right = right + "px";
-
-  accounts.forEach(acc=>{
-    const item = document.createElement("button");
-    const typeLabel = acc.type === "wallabag" ? "Wallabag" : "Readeck";
-    item.textContent = acc.name || typeLabel;
-    item.title = typeLabel;
-    item.style.cssText = "display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:.8em 1em; min-height:auto; font-weight:500;";
-    item.addEventListener("click", ()=>{ menu.remove(); sendToReadItLater(acc.id); });
-    menu.appendChild(item);
+  showPopupMenu({
+    id: "ril-account-menu",
+    anchorEl,
+    align: "right",
+    items: accounts.map(acc => ({
+      label: rilLabel(acc),
+      title: RIL_ADAPTERS[acc.type].label,
+      onClick: ()=> sendToReadItLater(acc.id)
+    }))
   });
-
-  document.body.appendChild(menu);
-  setTimeout(()=>{
-    document.addEventListener("click", function closeMenu(ev){
-      if(!menu.contains(ev.target)){ menu.remove(); document.removeEventListener("click", closeMenu); }
-    });
-  }, 0);
 }
 
 async function openArticle(entryId, opts){
@@ -3488,8 +3542,7 @@ async function openArticle(entryId, opts){
     wbBtn.style.cursor = "default";
   }else if(rlAccounts.length === 1){
     const acc = rlAccounts[0];
-    const typeLabel = acc.type === "wallabag" ? "Wallabag" : "Readeck";
-    wbBtn.title = "Send to " + (acc.name || typeLabel);
+    wbBtn.title = "Send to " + rilLabel(acc);
     wbBtn.addEventListener("click", ()=>sendToReadItLater(acc.id));
   }else{
     wbBtn.title = "Send to\u2026";
@@ -3497,8 +3550,18 @@ async function openArticle(entryId, opts){
   }
 
   const nextBtn = document.createElement("button");
-  nextBtn.className = "icon"; nextBtn.title = "Next article"; nextBtn.textContent = "\u{1F449}";
-  nextBtn.addEventListener("click", ()=>nextArticle());
+  nextBtn.className = "icon"; nextBtn.textContent = "\u{1F449}";
+  const curIdx = lastArticleOrder.indexOf(entry.id);
+  const hasNext = curIdx !== -1 && curIdx < lastArticleOrder.length - 1;
+  if(hasNext){
+    nextBtn.title = "Next article";
+    nextBtn.addEventListener("click", ()=>nextArticle());
+  }else{
+    nextBtn.title = "No more articles in this list";
+    nextBtn.disabled = true;
+    nextBtn.style.opacity = "0.4";
+    nextBtn.style.cursor = "default";
+  }
 
   const screenOpts = {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
   if(opts.replace){
@@ -3593,7 +3656,7 @@ async function sendToReadItLater(accountId){
   }
   if(!account) return;
 
-  const label = account.name || (account.type === "wallabag" ? "Wallabag" : "Readeck");
+  const label = rilLabel(account);
   toast(`Sending to ${label}...`);
   try{
     await rilSaveEntry(account, currentEntry);
