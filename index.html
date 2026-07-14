@@ -722,7 +722,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.53"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.54"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -4026,7 +4026,7 @@ async function openArticle(entryId, opts){
   }else{ enc.classList.add("hidden"); }
 
   if(CFG.imageCacheMode === "on-read" && !CFG.neverFetchImages){ prefetchImagesForEntry(entry); }
-  if(entry.status !== "read"){ await markRead(entry); }
+  if(entry.status !== "read"){ markRead(entry).catch(()=>{}); }
 }
 
 function nextArticle(){
@@ -4100,6 +4100,12 @@ async function sendToReadItLater(accountId){
 // mid-read. This is the one place in the app a reload happens without the
 // user directly asking for it moments before — but only ever after they've
 // explicitly confirmed it in this prompt.
+// sw.js deliberately doesn't self.skipWaiting() on its own — a newly
+// installed worker sits in "waiting" until the page explicitly agrees to
+// it here, so an update never reloads the app out from under someone
+// mid-read. This is the one place in the app a reload happens without the
+// user directly asking for it moments before — but only ever after they've
+// explicitly confirmed it in this prompt.
 function setupServiceWorker(){
   if(!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.register("sw.js").then(reg=>{
@@ -4160,7 +4166,13 @@ async function init(){
     if(entry){
       navStack = []; lastOpts = {title:"Feeds"};
       showScreen("screen-feeds", {title:"Feeds"});
-      await renderFeedList();
+      // Deliberately not rendering the feed list here: it's fully hidden
+      // behind screen-articles/screen-article for the rest of this restore
+      // sequence, so populating its DOM now is pure wasted work sitting
+      // directly in the critical path to showing the restored article. The
+      // existing back-button handler already re-renders it fresh
+      // (refreshCounters().then(renderFeedList)) the moment the user
+      // actually navigates back to it.
       // Restore the tab the user was actually browsing (this is what
       // pressing Back from the article will show — a fresh, live-filtered
       // list, which correctly no longer includes this entry if it's since
