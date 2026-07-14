@@ -663,6 +663,18 @@ fieldset legend {
         <div class="row" style="margin-top:.6em;">
           <button id="btn-clear-oversized" class="grow">Clear log</button>
         </div>
+        <hr>
+        <div class="row between wrap" style="gap:.6em;">
+          <span class="muted">Pending sync actions: <span id="outbox-count" class="mono-num">&mdash;</span></span>
+          <button id="btn-clear-outbox">Clear pending queue</button>
+        </div>
+        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
+          Read/unread, star, and send-to-read-it-later actions that couldn't reach the server yet
+          (offline, or the server rejected them) wait here and retry automatically, up to 15 attempts
+          before being given up on and logged above. Clearing removes them without retrying further —
+          your local read/unread/starred state is unaffected either way, only whether it's ever
+          reflected on the server.
+        </p>
       </fieldset>
 
       <fieldset>
@@ -740,7 +752,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.56"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.57"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1161,6 +1173,9 @@ async function clearAllCachedData(){
 function updateCacheUsageDisplay(){
   cacheStats().then(s=>{ $("#cache-usage").textContent = `${s.articleCount} articles \u00b7 ${s.imageCount} images (${(s.imageBytes/1048576).toFixed(1)} MB)`; });
 }
+function updateOutboxCountDisplay(){
+  idbGetAll("outbox").then(items=>{ $("#outbox-count").textContent = String(items.length); });
+}
 
 async function generateThumbnailBlob(srcObjUrl, maxSize) {
   return new Promise((resolve, reject) => {
@@ -1229,8 +1244,46 @@ function mbLimitToBytes(mb){
 // previously a 99MB image fetched purely to generate a small thumbnail
 // would download in full before being rejected by storeAsset() as too big
 // to cache. maxBytes <= 0 means unlimited (falls back to a plain read).
-async function fetchWithMaxSize(url, opts, maxBytes){
-  const resp = await fetch(url, opts);
+// Every network call in the app was going through bare fetch() with no
+// timeout at all — a server that accepts the connection and simply never
+// responds doesn't reject, it just hangs forever, and none of our error
+// handling (which only runs on rejection) ever catches that. Concretely
+// this could permanently occupy a sync concurrency slot, leave a URL
+// "stuck" in the thumbnail/asset in-flight dedup maps forever (so every
+// future reference to that same image hangs too), or leave the
+// "Syncing..." indicator on screen indefinitely (its startBgTask/endBgTask
+// pairing is only ever broken by something that never settles at all).
+// fetchWithTimeout() is the single place that now guards against that.
+const DEFAULT_FETCH_TIMEOUT_MS = 20000;
+async function fetchWithTimeout(url, opts, timeoutMs){
+  opts = opts || {};
+  timeoutMs = timeoutMs || DEFAULT_FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(()=>{ timedOut = true; controller.abort(); }, timeoutMs);
+  // Respect a caller-supplied signal too (whichever fires first wins)
+  // rather than silently overriding it.
+  const callerSignal = opts.signal;
+  if(callerSignal){
+    if(callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", ()=>controller.abort(), {once:true});
+  }
+  try{
+    return await fetch(url, Object.assign({}, opts, {signal: controller.signal}));
+  }catch(e){
+    if(timedOut){
+      const err = new Error(`request timed out after ${timeoutMs/1000}s`);
+      err.name = "TimeoutError";
+      throw err;
+    }
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+async function fetchWithMaxSize(url, opts, maxBytes, timeoutMs){
+  const resp = await fetchWithTimeout(url, opts, timeoutMs);
   if(!resp.ok){
     const err = new Error("HTTP "+resp.status);
     err.httpStatus = resp.status;
@@ -1388,7 +1441,7 @@ function cacheOpaqueInBackground(url, account){
     : url;
 
   startBgTask();
-  fetch(fetchUrl, {mode:"no-cors", referrerPolicy:"no-referrer"})
+  fetchWithTimeout(fetchUrl, {mode:"no-cors", referrerPolicy:"no-referrer"})
     .then(resp=>resp.blob())
     .then(blob=>{ if(blob && blob.size>0) return storeAsset(url, blob).catch(err=>{ if(err && err.tooLarge) recordOversizedImage(url, err.size); }); })
     .catch(()=>{})
@@ -1487,8 +1540,17 @@ async function gcOrphanImages(){
 /* ---- outbox ---- */
 async function enqueueOutbox(item){
   item.createdAt = Date.now();
+  item.attempts = 0;
   return tx("outbox","readwrite", store=>store.add(item));
 }
+// An item that can never succeed (revoked credentials, a permanently
+// deleted remote entry, whatever) previously retried forever, silently, on
+// every app load and every "online" event, with no way to know it was
+// stuck short of digging through the debug log. Past this many failed
+// attempts, stop retrying automatically and drop it instead — logged
+// clearly so it's visible in Settings -> Logging, rather than left to
+// accumulate invisibly.
+const MAX_OUTBOX_ATTEMPTS = 15;
 async function processOutbox(){
   const items = await idbGetAll("outbox");
   items.sort((a,b)=>a.seq-b.seq);
@@ -1511,8 +1573,27 @@ async function processOutbox(){
       // very possibly for a different account or of a different type
       // entirely — still get their turn this pass instead of being blocked
       // behind one stuck item indefinitely.
-      debug(`Outbox item still failing (type=${item.type}, seq=${item.seq}): ${e && e.message}`);
-      if(item.type === "rl-save") rlLog(`Outbox retry still failing for ${item.url}: ${e && e.message}`);
+      const attempts = (item.attempts || 0) + 1;
+      const message = (e && e.message) || String(e);
+      if(attempts >= MAX_OUTBOX_ATTEMPTS){
+        debug(`Outbox item abandoned after ${attempts} attempts (type=${item.type}, seq=${item.seq}): ${message}`);
+        if(item.type === "rl-save") rlLog(`Giving up on send to read-it-later for ${item.url} after ${attempts} attempts: ${message}`);
+        await tx("outbox","readwrite", store=>store.delete(item.seq));
+      }else{
+        debug(`Outbox item still failing, attempt ${attempts}/${MAX_OUTBOX_ATTEMPTS} (type=${item.type}, seq=${item.seq}): ${message}`);
+        if(item.type === "rl-save") rlLog(`Outbox retry still failing for ${item.url} (attempt ${attempts}/${MAX_OUTBOX_ATTEMPTS}): ${message}`);
+        await tx("outbox","readwrite", store=>{
+          return new Promise((resolve, reject)=>{
+            const req = store.get(item.seq);
+            req.onsuccess = ()=>{
+              const rec = req.result;
+              if(rec){ rec.attempts = attempts; rec.lastError = message; store.put(rec); }
+              resolve();
+            };
+            req.onerror = ()=>reject(req.error);
+          });
+        });
+      }
     }
   }
 }
@@ -1578,7 +1659,7 @@ async function mfFetch(account, path, opts){
   const headers = Object.assign({"X-Auth-Token":account.token}, opts.headers||{});
   if(opts.body) headers["Content-Type"] = "application/json";
   const proxied = applyProxy(account, "api", mfBase(account)+path, Object.assign({}, opts, {headers}));
-  const resp = await fetch(proxied.url, proxied.opts);
+  const resp = await fetchWithTimeout(proxied.url, proxied.opts);
   if(!resp.ok) throw new Error("Miniflux "+resp.status+" "+path);
   if(resp.status === 204) return null;
   return resp.json();
@@ -1669,7 +1750,7 @@ async function nbFetch(account, path, opts = {}) {
     const proxied = applyProxy(account, "api", account.url + path, fetchOptions);
 
     try {
-        const res = await fetch(proxied.url, proxied.opts);
+        const res = await fetchWithTimeout(proxied.url, proxied.opts);
         if (res.status === 401 || res.status === 403) {
             throw new Error("Authentication failed or session expired (Unauthorized/Forbidden)");
         }
@@ -1764,7 +1845,7 @@ async function nbFetchOriginalStoryHtml(account, permalinkUrl){
     if(!permalinkUrl) return null;
     try{
         const proxied = applyProxy(account, "nonApi", permalinkUrl, {referrerPolicy:"no-referrer"});
-        const resp = await fetch(proxied.url, proxied.opts);
+        const resp = await fetchWithTimeout(proxied.url, proxied.opts);
         if(!resp.ok) return null;
         return await resp.text();
     }catch(e){ return null; }
@@ -1923,16 +2004,12 @@ const LOCAL_FEED_FETCH_TIMEOUT_MS = 20000;
 const LOCAL_FEED_MAX_BYTES = 15 * 1024 * 1024;
 async function localFetchFeedXml(account, url){
   const proxied = applyProxy(account, "api", url, {});
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), LOCAL_FEED_FETCH_TIMEOUT_MS);
   try{
-    const blob = await fetchWithMaxSize(proxied.url, Object.assign({}, proxied.opts, {signal: controller.signal}), LOCAL_FEED_MAX_BYTES);
+    const blob = await fetchWithMaxSize(proxied.url, proxied.opts, LOCAL_FEED_MAX_BYTES, LOCAL_FEED_FETCH_TIMEOUT_MS);
     return await blob.text();
   }catch(e){
-    if(e && e.name === "AbortError") throw new Error(`timed out after ${LOCAL_FEED_FETCH_TIMEOUT_MS/1000}s`);
+    if(e && e.name === "TimeoutError") throw new Error(`timed out after ${LOCAL_FEED_FETCH_TIMEOUT_MS/1000}s`);
     throw e;
-  }finally{
-    clearTimeout(timer);
   }
 }
 
@@ -2153,7 +2230,7 @@ async function wbEnsureToken(account){
   const proxied = applyProxy(account, "api", wbBase(account)+"/oauth/v2/token", {
     method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body
   });
-  const resp = await fetch(proxied.url, proxied.opts);
+  const resp = await fetchWithTimeout(proxied.url, proxied.opts);
   if(!resp.ok){
     let detail = ""; try{ detail = (await resp.text()).slice(0,300); }catch(e){}
     rlLog(`Wallabag auth failed for "${account.name}": status=${resp.status}${detail ? ", body="+detail : ""}`);
@@ -2172,7 +2249,7 @@ async function wbSaveEntry(account, title, content, url){
     method:"POST", headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token},
     body:JSON.stringify({url, title, content})
   });
-  const resp = await fetch(proxied.url, proxied.opts);
+  const resp = await fetchWithTimeout(proxied.url, proxied.opts);
   if(!resp.ok){
     let detail = ""; try{ detail = (await resp.text()).slice(0,300); }catch(e){}
     rlLog(`Wallabag save failed for "${account.name}": status=${resp.status}, url=${url}${detail ? ", body="+detail : ""}`);
@@ -2187,7 +2264,7 @@ async function wbSaveEntry(account, title, content, url){
 function rdBase(account){ return (account.url||"").replace(/\/+$/,""); }
 async function rdFetch(account, opts){
   const proxied = applyProxy(account, "api", rdBase(account)+"/api/bookmarks", opts);
-  return fetch(proxied.url, proxied.opts);
+  return fetchWithTimeout(proxied.url, proxied.opts);
 }
 
 // Assembles a multipart/form-data body from an array of
@@ -2434,6 +2511,7 @@ $("#btn-config").addEventListener("click", ()=>{
     navigate("screen-config", {title:"Settings"});
     renderOversizedLog();
     updateCacheUsageDisplay();
+    updateOutboxCountDisplay();
   }
 });
 $("#btn-top-save").addEventListener("click", () => {
@@ -2573,6 +2651,7 @@ function populateConfigForm(){
 
   refreshStartupOptions();
   updateCacheUsageDisplay();
+  updateOutboxCountDisplay();
   renderOversizedLog();
 }
 
@@ -2749,8 +2828,14 @@ window.deleteAccount = async (id) => {
   $("#feed-picker").classList.add("hidden");
   feedPickerChoices = null;
 
-  for(const f of toRemove) await removeFeed(f.id);
-  toast("Account removed");
+  let cleanupFailures = 0;
+  for(const f of toRemove){
+    try{ await removeFeed(f.id); }
+    catch(e){ cleanupFailures++; debug(`deleteAccount: removeFeed failed for feed=${f.id}: ${e && e.message}`); }
+  }
+  toast(cleanupFailures > 0
+    ? `Account removed (${cleanupFailures} feed${cleanupFailures!==1?"s":""} left some cached data behind)`
+    : "Account removed");
 };
 
 /* Read-it-later Accounts Management UI */
@@ -3251,6 +3336,12 @@ $("#btn-clear-cache").addEventListener("click", async ()=>{
   toast("All cached data cleared");
   updateCacheUsageDisplay();
 });
+$("#btn-clear-outbox").addEventListener("click", async ()=>{
+  if(!confirm("Clear all pending sync actions? Your local read/unread/starred state stays as-is — this only stops trying to push it to the server.")) return;
+  await tx("outbox","readwrite", store=>store.clear());
+  toast("Pending sync queue cleared");
+  updateOutboxCountDisplay();
+});
 
 /* App log UI (shared by oversized-image tracking, thumbnail tracing, etc.) */
 function renderOversizedLog(){
@@ -3613,7 +3704,9 @@ async function refreshCounterForFeed(feedObj){
 }
 
 async function refreshCounters(){
-  await Promise.all(CFG.selectedFeeds.map(f => refreshCounterForFeed(f)));
+  await Promise.all(CFG.selectedFeeds.map(f => refreshCounterForFeed(f).catch(e=>{
+    debug(`refreshCounterForFeed failed for feed=${f.id}: ${e && e.message}`);
+  })));
 }
 
 /* ============================= FEED LIST SCREEN ============================= */
@@ -3825,9 +3918,15 @@ $("#btn-bulk-mark").addEventListener("click", ()=>bulkMarkAll());
 // then pushes the change to the remote server grouped by account so most
 // providers only need one bulk API call rather than one per article.
 async function applyBulkStatus(entries, status){
+  let localFailures = 0;
   for(const e of entries){
     e.status = status;
-    await patchEntry(e.id, rec=>{ rec.status = status; });
+    try{
+      await patchEntry(e.id, rec=>{ rec.status = status; });
+    }catch(err){
+      localFailures++;
+      debug(`applyBulkStatus: local patchEntry failed for entry=${e.id}: ${err && err.message}`);
+    }
   }
 
   const byAccount = new Map();
@@ -3852,6 +3951,7 @@ async function applyBulkStatus(entries, status){
       catch(err){ await enqueueOutbox({type:"mark-status", accountId, rawIds, rawFeedId:accEntries[0].rawFeedId, status}); }
     }
   }
+  return {localFailures};
 }
 
 async function bulkMarkAll(){
@@ -3863,9 +3963,17 @@ async function bulkMarkAll(){
   const listLabel = currentFolderName ? `folder "${currentFolderName}"` : "this feed";
   if(!confirm(`Mark ${entries.length} article${entries.length!==1?"s":""} in ${listLabel} as ${targetStatus}?`)) return;
 
-  await applyBulkStatus(entries, targetStatus);
-
-  toast(`Marked ${entries.length} article${entries.length!==1?"s":""} as ${targetStatus}`);
+  try{
+    const {localFailures} = await applyBulkStatus(entries, targetStatus);
+    if(localFailures > 0){
+      toast(`Marked ${entries.length - localFailures}/${entries.length} article${entries.length!==1?"s":""} as ${targetStatus} (${localFailures} failed locally)`);
+    }else{
+      toast(`Marked ${entries.length} article${entries.length!==1?"s":""} as ${targetStatus}`);
+    }
+  }catch(e){
+    toast(`Could not mark articles as ${targetStatus}: ${e && e.message}`);
+    debug(`bulkMarkAll failed: ${e && e.message}`);
+  }
   renderArticleList();
 }
 
