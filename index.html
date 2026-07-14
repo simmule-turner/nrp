@@ -722,7 +722,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.52"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.53"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -4094,6 +4094,44 @@ async function sendToReadItLater(accountId){
   }
 }
 
+// sw.js deliberately doesn't self.skipWaiting() on its own — a newly
+// installed worker sits in "waiting" until the page explicitly agrees to
+// it here, so an update never reloads the app out from under someone
+// mid-read. This is the one place in the app a reload happens without the
+// user directly asking for it moments before — but only ever after they've
+// explicitly confirmed it in this prompt.
+function setupServiceWorker(){
+  if(!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("sw.js").then(reg=>{
+    const promptForUpdate = (worker)=>{
+      if(!worker) return;
+      if(confirm("An update to NRP is available. Reload now?")){
+        worker.postMessage("SKIP_WAITING");
+      }
+    };
+    if(reg.waiting) promptForUpdate(reg.waiting);
+    reg.addEventListener("updatefound", ()=>{
+      const newWorker = reg.installing;
+      if(!newWorker) return;
+      newWorker.addEventListener("statechange", ()=>{
+        // "installed" + an existing controller means this is an update to
+        // an already-running app, not the very first install (which has no
+        // controller yet and needs no prompt).
+        if(newWorker.state === "installed" && navigator.serviceWorker.controller){
+          promptForUpdate(newWorker);
+        }
+      });
+    });
+  }).catch(()=>{});
+
+  let swReloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+    if(swReloading) return;
+    swReloading = true;
+    location.reload();
+  });
+}
+
 /* ============================= STARTUP ============================= */
 async function init(){
   await openDb();
@@ -4104,7 +4142,7 @@ async function init(){
   $("#art-sort-field").value = artSort.field;
   $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
 
-  if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+  setupServiceWorker();
 
   if(!CFG.accounts || CFG.accounts.length === 0){
     navigate("screen-config", {title:"Settings"});
