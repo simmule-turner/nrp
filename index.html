@@ -273,11 +273,14 @@ fieldset legend {
           <select id="acc-type">
             <option value="miniflux">Miniflux</option>
             <option value="newsblur">NewsBlur</option>
+            <option value="local">Local</option>
           </select>
           <label for="acc-name">Account Name</label>
           <input id="acc-name" type="text" placeholder="e.g. My RSS Server">
-          <label for="acc-url">Server URL</label>
-          <input id="acc-url" type="url" placeholder="https://...">
+          <div id="acc-url-field">
+            <label for="acc-url">Server URL</label>
+            <input id="acc-url" type="url" placeholder="https://...">
+          </div>
 
           <div id="acc-mf-fields">
             <label for="acc-token">API Token</label>
@@ -286,6 +289,13 @@ fieldset legend {
           <div id="acc-nb-fields" class="hidden">
             <p class="muted" style="font-size:11px; margin:0;">
               NewsBlur requires the API Proxy below to be enabled. Configure the proxy URL and any auth headers your proxy needs (e.g. session cookie, API key) there.
+            </p>
+          </div>
+          <div id="acc-local-fields" class="hidden">
+            <p class="muted" style="font-size:11px; margin:0;">
+              Local accounts have no central server — NRP fetches each feed's URL directly.
+              Add, edit, or remove feeds from "Manage feeds&hellip;" below. If a feed's server
+              doesn't allow direct browser requests (CORS), enable the API Proxy below.
             </p>
           </div>
 
@@ -339,6 +349,13 @@ fieldset legend {
             <select id="feed-picker-account" class="grow" style="margin-right:.4em;"></select>
             <button id="btn-select-all" class="chip">All</button>
             <button id="btn-deselect-all" class="chip">None</button>
+          </div>
+          <div id="local-feed-add" class="hidden" style="margin-bottom:.8em; padding:.6em; border:1px solid var(--border); border-radius:3px;">
+            <label for="local-feed-url" style="margin-top:0;">Add feed URL</label>
+            <input id="local-feed-url" type="url" placeholder="https://example.com/feed.xml">
+            <div class="row" style="margin-top:.5em;">
+              <button type="button" id="btn-add-local-feed" class="chip grow">+ Add feed</button>
+            </div>
           </div>
           <div id="feed-picker-list" class="chk-list"></div>
         </div>
@@ -637,6 +654,16 @@ fieldset legend {
           <button id="btn-import-cfg" class="grow">Import Options</button>
           <input type="file" id="file-import-cfg" class="hidden" accept=".json">
         </div>
+        <div class="row wrap" style="margin-top:.6em;">
+          <button id="btn-export-opml" class="grow">Export Feeds (OPML)</button>
+          <button id="btn-import-opml" class="grow">Import Feeds (OPML)</button>
+          <input type="file" id="file-import-opml" class="hidden" accept=".opml,.xml">
+        </div>
+        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
+          OPML is a standard format most feed readers can export/import. Exporting includes every
+          selected feed (any account type) with its folder. Importing adds feeds into a dedicated
+          local account (creating one named "Imported Feeds" if it doesn't exist yet).
+        </p>
       </fieldset>
 
       <p class="muted" style="text-align:center; font-size:11px; margin:1.4em 0 0;">NRP <span id="app-version-label"></span></p>
@@ -695,7 +722,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.50"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.51"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -1493,6 +1520,19 @@ const READER_ADAPTERS = {
     getUnreadEntries: (account, rawFeedId, knownRawIds, contentMode) => nbGetUnreadEntries(account, rawFeedId, knownRawIds, contentMode),
     markStatus: (account, rawEntryIds, status, rawFeedId) => nbMarkStatus(account, rawEntryIds, status, rawFeedId),
     toggleBookmark: (account, rawEntryId, rawFeedId, isStarred) => nbToggleBookmark(account, rawEntryId, rawFeedId, isStarred)
+  },
+  local: {
+    label: "Local",
+    getFeeds: (account) => localGetFeeds(account),
+    // rawFeedId/knownRawIds/maxItems already carry local feeds through the
+    // exact same dedup + slicing machinery every other backend uses.
+    getUnreadEntries: (account, rawFeedId, knownRawIds) => localGetUnreadEntries(account, rawFeedId, knownRawIds),
+    // Read/starred state is already 100% local for every account type —
+    // Miniflux/NewsBlur's markStatus/toggleBookmark are a best-effort sync
+    // to the remote server, not what drives NRP's own UI. Local accounts
+    // have no remote to sync to, so these are simply no-ops.
+    markStatus: async () => null,
+    toggleBookmark: async () => null
   }
 };
 function readerAdapter(account){
@@ -1528,7 +1568,8 @@ async function mfFetch(account, path, opts){
 async function mfGetFeeds(account){
   const feeds = await mfFetch(account, "/v1/feeds");
   return feeds.map(f => ({
-    id: String(f.id), title: f.title, categoryTitle: (f.category && f.category.title) || "Uncategorized"
+    id: String(f.id), title: f.title, categoryTitle: (f.category && f.category.title) || "Uncategorized",
+    url: f.feed_url || null
   }));
 }
 // Miniflux's /v1/feeds/:id/entries has no content-less "just check IDs" mode
@@ -1646,7 +1687,8 @@ async function nbGetFeeds(account){
         out.push({
             id: String(id),
             title: f.feed_title,
-            categoryTitle: catMap[id] || "Uncategorized"
+            categoryTitle: catMap[id] || "Uncategorized",
+            url: f.feed_address || f.feed_link || null
         });
     }
     return out;
@@ -1839,7 +1881,165 @@ async function nbToggleBookmark(account, entryId, rawFeedId, isStarred){
     });
 }
 
-/* ============================= READ-IT-LATER API ABSTRACTIONS ============================= */
+/* ============================= LOCAL ACCOUNTS (self-managed feeds) ============================= */
+// A "local" account has no remote server at all — the user adds/edits/
+// removes feed URLs directly (account.localFeeds), and NRP fetches +
+// parses each one itself. getFeeds()/getUnreadEntries() below deliberately
+// return the exact same shapes mfGetFeeds/nbGetFeeds and
+// mfGetUnreadEntries/nbGetUnreadEntries do, so every other part of the app
+// (the feed picker, dedup, folders, sync) needs zero special-casing for
+// this backend — it's just another adapter in READER_ADAPTERS.
+
+function localGetFeeds(account){
+  return (account.localFeeds||[]).map(f => ({
+    id: f.id, title: f.title, categoryTitle: "Uncategorized", url: f.url
+  }));
+}
+
+// Reuses the same "api" proxy slot reader accounts already have (CORS is a
+// real problem here: most feed servers don't send
+// Access-Control-Allow-Origin, exactly why NewsBlur accounts already
+// require a proxy) — so readProxyFields/populateProxyFields work for local
+// accounts with zero new code, just the same fieldset markup.
+const LOCAL_FEED_FETCH_TIMEOUT_MS = 20000;
+const LOCAL_FEED_MAX_BYTES = 15 * 1024 * 1024;
+async function localFetchFeedXml(account, url){
+  const proxied = applyProxy(account, "api", url, {});
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), LOCAL_FEED_FETCH_TIMEOUT_MS);
+  try{
+    const blob = await fetchWithMaxSize(proxied.url, Object.assign({}, proxied.opts, {signal: controller.signal}), LOCAL_FEED_MAX_BYTES);
+    return await blob.text();
+  }catch(e){
+    if(e && e.name === "AbortError") throw new Error(`timed out after ${LOCAL_FEED_FETCH_TIMEOUT_MS/1000}s`);
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+function textOf(el){ return el ? (el.textContent||"").trim() : ""; }
+// Namespaced elements (e.g. content:encoded) need a namespace-aware lookup
+// in an XML document rather than a plain CSS selector.
+function firstNS(el, localName){
+  if(!el || !el.getElementsByTagNameNS) return null;
+  const list = el.getElementsByTagNameNS("*", localName);
+  return list && list.length ? list[0] : null;
+}
+// Cheap, dependency-free fallback id for the rare item with neither a
+// guid/id nor a link — stable across re-fetches of the same content so it
+// still dedupes correctly, just not across a genuine content edit.
+function hashString(s){
+  let h = 0;
+  for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
+  return "h" + Math.abs(h).toString(36);
+}
+
+// Parses RSS 2.0 or Atom XML text into {feedTitle, items[]}. RDF/RSS 1.0 is
+// out of scope (rare in practice) — an unrecognized root throws, which
+// callers log and skip rather than risk mis-parsing.
+function parseFeedXml(xmlText, feedUrl){
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  if(doc.querySelector("parsererror")) throw new Error("feed XML could not be parsed");
+  const root = doc.documentElement;
+  const rootTag = root ? root.tagName.toLowerCase() : "";
+  const items = [];
+
+  if(rootTag === "feed"){
+    // Atom
+    const feedTitle = textOf(root.querySelector(":scope > title"));
+    root.querySelectorAll(":scope > entry").forEach(entry=>{
+      const id = textOf(entry.querySelector(":scope > id"));
+      const title = textOf(entry.querySelector(":scope > title"));
+      const linkEl = entry.querySelector('link[rel="alternate"]') || entry.querySelector("link:not([rel])") || entry.querySelector("link");
+      const link = linkEl ? linkEl.getAttribute("href") : null;
+      const content = textOf(entry.querySelector(":scope > content")) || textOf(entry.querySelector(":scope > summary")) || "";
+      const published = textOf(entry.querySelector(":scope > published")) || textOf(entry.querySelector(":scope > updated"));
+      const encEl = entry.querySelector('link[rel="enclosure"]');
+      items.push({
+        rawId: id || link || hashString(title + published),
+        title: title || "(untitled)",
+        url: link || feedUrl,
+        content,
+        publishedAt: published || new Date().toISOString(),
+        enclosureUrl: encEl ? encEl.getAttribute("href") : null
+      });
+    });
+    return {feedTitle, items};
+  }
+
+  // RSS 2.0
+  const channel = root.querySelector("channel") || root;
+  const feedTitle = textOf(channel.querySelector(":scope > title"));
+  channel.querySelectorAll(":scope > item").forEach(item=>{
+    const guid = textOf(item.querySelector(":scope > guid"));
+    const link = textOf(item.querySelector(":scope > link"));
+    const title = textOf(item.querySelector(":scope > title"));
+    const contentEncoded = textOf(firstNS(item, "encoded"));
+    const description = textOf(item.querySelector(":scope > description"));
+    const pubDate = textOf(item.querySelector(":scope > pubDate"));
+    const encEl = item.querySelector("enclosure");
+    let publishedAt = new Date().toISOString();
+    if(pubDate){ const d = new Date(pubDate); if(!isNaN(d.getTime())) publishedAt = d.toISOString(); }
+    items.push({
+      rawId: guid || link || hashString(title + pubDate),
+      title: title || "(untitled)",
+      url: link || feedUrl,
+      content: contentEncoded || description || "",
+      publishedAt,
+      enclosureUrl: encEl ? encEl.getAttribute("url") : null
+    });
+  });
+  return {feedTitle, items};
+}
+
+// Local feeds have no server-side pagination or unread tracking — every
+// sync fetches the whole feed (whatever the site currently publishes) and
+// relies on the same knownRawIds dedup every other backend uses to skip
+// items already stored locally, so re-fetching an unchanged feed produces
+// no new entries. A single unresponsive or oversized feed fails fast
+// (timeout + max-size cap above) and is logged rather than left to hang.
+async function localGetUnreadEntries(account, rawFeedId, knownRawIds){
+  knownRawIds = knownRawIds || new Set();
+  const feedDef = (account.localFeeds||[]).find(f => f.id === rawFeedId);
+  if(!feedDef) return [];
+  const maxNeeded = account.maxItems || 50;
+
+  let xmlText;
+  try{
+    xmlText = await localFetchFeedXml(account, feedDef.url);
+  }catch(e){
+    debug(`Local feed fetch failed for "${feedDef.title}" (${feedDef.url}): ${e && e.message}`);
+    return [];
+  }
+  let parsed;
+  try{
+    parsed = parseFeedXml(xmlText, feedDef.url);
+  }catch(e){
+    debug(`Local feed parse failed for "${feedDef.title}" (${feedDef.url}): ${e && e.message}`);
+    return [];
+  }
+
+  const freshItems = parsed.items.filter(it => !knownRawIds.has(it.rawId)).slice(0, maxNeeded);
+  return freshItems.map(it => ({
+    id: account.id + "___" + it.rawId,
+    rawId: it.rawId,
+    feedId: account.id + "___" + rawFeedId,
+    rawFeedId: rawFeedId,
+    accountId: account.id,
+    title: it.title,
+    url: it.url,
+    content: it.content,
+    contentSize: (it.content||"").length,
+    publishedAt: it.publishedAt,
+    status: "unread",
+    starred: false,
+    enclosureUrl: it.enclosureUrl,
+    feedTitle: feedDef.title
+  }));
+}
+
+
 // Two supported types: "wallabag" (OAuth password grant) and "readeck"
 // (static API token). Both are managed as accounts in CFG.readItLaterAccounts,
 // analogous to the reader accounts in CFG.accounts.
@@ -2369,10 +2569,13 @@ function renderAccountsList() {
   CFG.accounts.forEach(acc => {
     const row = document.createElement("div");
     row.className = "account-item";
+    const subtitle = acc.type === "local"
+      ? `${(acc.localFeeds||[]).length} feed${(acc.localFeeds||[]).length!==1?"s":""}`
+      : acc.url;
     row.innerHTML = `
       <div class="info">
         <strong>${escapeHtml(acc.name)}</strong>
-        <span>${escapeHtml(acc.type)} &middot; ${escapeHtml(acc.url)}</span>
+        <span>${escapeHtml(acc.type)} &middot; ${escapeHtml(subtitle)}</span>
       </div>
       <div class="actions">
         <button class="icon" title="Edit" onclick="editAccount('${acc.id}')">&#9998;</button>
@@ -2463,16 +2666,20 @@ $("#acc-type").addEventListener("change", (e) => {
   const t = e.target.value;
   $("#acc-mf-fields").classList.toggle("hidden", t !== "miniflux");
   $("#acc-nb-fields").classList.toggle("hidden", t !== "newsblur");
+  $("#acc-local-fields").classList.toggle("hidden", t !== "local");
+  $("#acc-url-field").classList.toggle("hidden", t === "local");
 });
 
 // REPLACE:
 $("#btn-save-account").addEventListener("click", () => {
   const id = $("#acc-form-id").value || ("acc_" + Date.now());
+  const type = $("#acc-type").value;
+  const existing = CFG.accounts.find(a => a.id === id) || {};
   const acc = {
     id: id,
-    type: $("#acc-type").value,
-    name: $("#acc-name").value.trim() || $("#acc-type").value,
-    url: $("#acc-url").value.trim(),
+    type: type,
+    name: $("#acc-name").value.trim() || type,
+    url: type === "local" ? "" : $("#acc-url").value.trim(),
     maxItems: parseInt($("#acc-max").value, 10) || 50,
     ...readProxyFields("acc-api-proxy", "api"),
     ...readProxyFields("acc-nonapi-proxy", "nonApi")
@@ -2481,6 +2688,12 @@ $("#btn-save-account").addEventListener("click", () => {
   if(acc.type === "newsblur" && (!acc.apiProxyEnabled || !acc.apiProxyUrl)){
     toast("NewsBlur accounts require the API Proxy to be enabled with a URL");
     return;
+  }
+  if(acc.type === "local"){
+    // Feeds themselves are managed from "Manage feeds..." (add/edit/delete
+    // there commit immediately) — preserve whatever's already there across
+    // an account-details edit.
+    acc.localFeeds = existing.localFeeds || [];
   }
 
   const existingIdx = CFG.accounts.findIndex(a => a.id === id);       if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
@@ -2751,6 +2964,7 @@ $("#btn-manage-feeds").addEventListener("click", async ()=>{
         const prior = selectedById.get(uid);
         feedPickerChoices.set(uid, {
           uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, accountType: acc.type, title: f.title,
+          url: f.url || null,
           checked: !!prior,
           categoryTitle: f.categoryTitle || "Uncategorized",
           folderName: prior ? (prior.folderName || null) : null,
@@ -2793,6 +3007,83 @@ $("#btn-deselect-all").addEventListener("click", () => {
   renderFeedPicker();
 });
 
+// Local-feed CRUD (local accounts only). Unlike the checkbox-selection
+// flow above (staged in feedPickerChoices, committed on "Save
+// configuration"), these commit to CFG.accounts immediately — matching how
+// account CRUD itself already works — since a feed's URL/title isn't a
+// selection, it's the account's own catalog.
+function genLocalFeedId(){ return "lf_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+async function addLocalFeedToAccount(account){
+  const url = $("#local-feed-url").value.trim();
+  if(!url){ toast("Enter a feed URL"); return; }
+  toast("Fetching feed\u2026");
+  startBgTask();
+  try{
+    const xml = await localFetchFeedXml(account, url);
+    const parsed = parseFeedXml(xml, url);
+    const feedDef = { id: genLocalFeedId(), url, title: parsed.feedTitle || url };
+    account.localFeeds = account.localFeeds || [];
+    account.localFeeds.push(feedDef);
+    saveConfig(CFG);
+    $("#local-feed-url").value = "";
+    toast(`Added "${feedDef.title}"`);
+    if(feedPickerChoices){
+      const uid = account.id + "___" + feedDef.id;
+      feedPickerChoices.set(uid, {
+        uid, rawId: feedDef.id, accountId: account.id, accountName: account.name, accountType: "local",
+        url: feedDef.url, title: feedDef.title, checked: true, categoryTitle: "Uncategorized",
+        folderName: null, contentMode: "default"
+      });
+    }
+    renderFeedPicker();
+  }catch(e){
+    toast("Could not add feed: " + (e && e.message));
+  } finally {
+    endBgTask();
+  }
+}
+$("#btn-add-local-feed").addEventListener("click", ()=>{
+  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  if(acc) addLocalFeedToAccount(acc);
+});
+
+function editLocalFeed(f){
+  const account = CFG.accounts.find(a => a.id === f.accountId);
+  if(!account) return;
+  const feedDef = (account.localFeeds||[]).find(lf => lf.id === f.rawId);
+  if(!feedDef) return;
+  const newTitle = prompt("Feed title:", feedDef.title);
+  if(newTitle === null) return;
+  const newUrl = prompt("Feed URL:", feedDef.url);
+  if(newUrl === null) return;
+  feedDef.title = newTitle.trim() || feedDef.title;
+  feedDef.url = newUrl.trim() || feedDef.url;
+  saveConfig(CFG);
+  f.title = feedDef.title;
+  f.url = feedDef.url;
+  const sel = CFG.selectedFeeds.find(s => s.id === f.uid);
+  if(sel){ sel.title = feedDef.title; sel.url = feedDef.url; saveConfig(CFG); }
+  renderFeedPicker();
+  toast("Feed updated");
+}
+
+async function deleteLocalFeed(f){
+  if(!confirm(`Remove feed "${f.title}"?`)) return;
+  const account = CFG.accounts.find(a => a.id === f.accountId);
+  if(!account) return;
+  account.localFeeds = (account.localFeeds||[]).filter(lf => lf.id !== f.rawId);
+  saveConfig(CFG);
+  if(feedPickerChoices) feedPickerChoices.delete(f.uid);
+  if(CFG.selectedFeeds.some(s => s.id === f.uid)){
+    CFG.selectedFeeds = CFG.selectedFeeds.filter(s => s.id !== f.uid);
+    saveConfig(CFG);
+    await removeFeed(f.uid);
+  }
+  renderFeedPicker();
+  toast("Feed removed");
+}
+
 // Lets the user pick how a NewsBlur feed's stories are fetched on future
 // syncs: "default" (feed-provided content, as-is), "original_text"
 // (NewsBlur's own server-side extracted text — what NewsBlur calls Text
@@ -2823,6 +3114,8 @@ function renderFeedPicker(){
   list.innerHTML = "";
   const activeAccId = $("#feed-picker-account").value;
   if(!feedPickerChoices || !activeAccId) return;
+  const activeAccount = CFG.accounts.find(a => a.id === activeAccId);
+  $("#local-feed-add").classList.toggle("hidden", !activeAccount || activeAccount.type !== "local");
 
   [...feedPickerChoices.values()]
     .filter(f => f.accountId === activeAccId)
@@ -2845,6 +3138,23 @@ function renderFeedPicker(){
       lab.addEventListener("click", ()=>showContentModeMenu(f, lab));
     }
     row.appendChild(cb); row.appendChild(lab);
+
+    if(f.accountType === "local"){
+      const actions = document.createElement("div");
+      actions.className = "row"; actions.style.cssText = "flex:0 0 auto; gap:.2em;";
+      const editBtn = document.createElement("button");
+      editBtn.type = "button"; editBtn.className = "icon"; editBtn.title = "Edit feed";
+      editBtn.style.cssText = "width:36px; height:36px; flex:0 0 36px; font-size:1em;";
+      editBtn.textContent = "\u270E";
+      editBtn.addEventListener("click", ()=>editLocalFeed(f));
+      const delBtn = document.createElement("button");
+      delBtn.type = "button"; delBtn.className = "icon danger"; delBtn.title = "Delete feed";
+      delBtn.style.cssText = "width:36px; height:36px; flex:0 0 36px; font-size:1em;";
+      delBtn.textContent = "\u{1F5D1}";
+      delBtn.addEventListener("click", ()=>deleteLocalFeed(f));
+      actions.appendChild(editBtn); actions.appendChild(delBtn);
+      row.appendChild(actions);
+    }
 
     if(CFG.folderMode === "manual"){
       const sel = document.createElement("select");
@@ -2936,6 +3246,113 @@ $("#file-import-cfg").addEventListener("change", e=>{
   reader.readAsText(file);
 });
 
+/* ---- OPML feed export/import (distinct from the whole-config JSON above) ---- */
+function buildOpml(){
+  const groups = new Map();
+  CFG.selectedFeeds.forEach(f=>{
+    const key = f.folderName || null;
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  });
+  const feedOutline = (f)=>{
+    if(!f.url){
+      debug(`OPML export: skipping "${f.title}" — no URL available for this feed`);
+      return "";
+    }
+    return `<outline type="rss" text="${escapeAttr(f.title)}" title="${escapeAttr(f.title)}" xmlUrl="${escapeAttr(f.url)}" />\n`;
+  };
+  let body = "";
+  (groups.get(null)||[]).forEach(f=>{ body += feedOutline(f); });
+  [...groups.keys()].filter(k=>k!==null).sort().forEach(folderName=>{
+    body += `<outline text="${escapeAttr(folderName)}" title="${escapeAttr(folderName)}">\n`;
+    groups.get(folderName).forEach(f=>{ body += feedOutline(f); });
+    body += `</outline>\n`;
+  });
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n<head><title>NRP Feeds</title></head>\n<body>\n${body}</body>\n</opml>\n`;
+}
+$("#btn-export-opml").addEventListener("click", ()=>{
+  const blob = new Blob([buildOpml()], {type:"text/x-opml"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "nrp-feeds.opml"; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// Imported feeds always land in one dedicated, idempotent local account —
+// re-importing the same or an updated OPML file won't create duplicate
+// accounts, and already-imported feed URLs are recognized rather than
+// duplicated. Deliberately does NOT fetch/validate each feed at import time
+// (an OPML file can list hundreds of feeds — that would be slow and heavy);
+// entries simply populate on the next normal sync, same as any newly added
+// feed, protected by the same per-feed timeout/size-cap/isolation already
+// in place for local feeds generally.
+function ensureImportAccount(){
+  let acc = CFG.accounts.find(a => a.id === "opml_import");
+  if(!acc){
+    acc = { id: "opml_import", type: "local", name: "Imported Feeds", url: "", maxItems: 50, localFeeds: [] };
+    CFG.accounts.push(acc);
+  }
+  acc.localFeeds = acc.localFeeds || [];
+  return acc;
+}
+function importOpml(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  if(doc.querySelector("parsererror")) throw new Error("file could not be parsed as OPML");
+  const account = ensureImportAccount();
+  const existingUrls = new Set(account.localFeeds.map(f=>f.url));
+  let addedFeeds = 0, addedSelections = 0;
+
+  const walk = (node, folderName)=>{
+    [...node.children].forEach(child=>{
+      if(child.tagName.toLowerCase() !== "outline") return;
+      const xmlUrl = child.getAttribute("xmlUrl");
+      if(xmlUrl){
+        let feedDef = account.localFeeds.find(f=>f.url===xmlUrl);
+        if(!feedDef){
+          feedDef = { id: genLocalFeedId(), url: xmlUrl, title: child.getAttribute("title") || child.getAttribute("text") || xmlUrl };
+          account.localFeeds.push(feedDef);
+          existingUrls.add(xmlUrl);
+          addedFeeds++;
+        }
+        const uid = account.id + "___" + feedDef.id;
+        if(!CFG.selectedFeeds.some(s=>s.id===uid)){
+          CFG.selectedFeeds.push({
+            id: uid, rawId: feedDef.id, accountId: account.id, title: feedDef.title, url: feedDef.url,
+            folderName: folderName || null, contentMode: "default"
+          });
+          addedSelections++;
+        }
+      }else if(child.children.length){
+        walk(child, child.getAttribute("title") || child.getAttribute("text") || folderName);
+      }
+    });
+  };
+  walk(doc.querySelector("body") || doc.documentElement, null);
+
+  saveConfig(CFG);
+  return {addedFeeds, addedSelections};
+}
+$("#btn-import-opml").addEventListener("click", ()=> $("#file-import-opml").click());
+$("#file-import-opml").addEventListener("change", e=>{
+  const file = e.target.files[0];
+  e.target.value = ""; // allow re-selecting the same file consecutively
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try{
+      const {addedFeeds, addedSelections} = importOpml(ev.target.result);
+      toast(`Imported ${addedFeeds} new feed${addedFeeds!==1?"s":""}, ${addedSelections} added to your list`);
+      feedPickerChoices = null;
+      $("#feed-picker").classList.add("hidden");
+      populateConfigForm();
+      renderFeedList();
+    }catch(err){
+      toast("Could not import OPML: " + (err && err.message));
+    }
+  };
+  reader.readAsText(file);
+});
+
 $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.imageCacheMode = $("#cfg-image-cache-mode").value;
 
@@ -2978,7 +3395,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
   if(feedPickerChoices){
     const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({
-      id: f.uid, rawId: f.rawId, accountId: f.accountId, title: f.title,
+      id: f.uid, rawId: f.rawId, accountId: f.accountId, title: f.title, url: f.url || null,
       folderName: CFG.folderMode==="miniflux" ? (f.categoryTitle||null)
                 : CFG.folderMode==="manual" ? (f.folderName||null) : null,
       contentMode: f.contentMode || "default"
