@@ -722,7 +722,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.52"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.51"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -3231,7 +3231,6 @@ $("#btn-export-cfg").addEventListener("click", ()=>{
 $("#btn-import-cfg").addEventListener("click", ()=> $("#file-import-cfg").click());
 $("#file-import-cfg").addEventListener("change", e=>{
   const file = e.target.files[0];
-  e.target.value = ""; // allow re-selecting the same file consecutively
   if(!file) return;
   const reader = new FileReader();
   reader.onload = e => {
@@ -3240,16 +3239,8 @@ $("#file-import-cfg").addEventListener("change", e=>{
       delete parsed.selectedFeeds;
       Object.assign(CFG, parsed);
       saveConfig(CFG);
-      // Re-render in place instead of location.reload(): everything a
-      // fresh load would set up from this same CFG object, applied
-      // directly, without tearing down the running JS/network session.
-      applyTheme();
-      setupManifest();
-      populateConfigForm();
-      feedPickerChoices = null;
-      $("#feed-picker").classList.add("hidden");
-      toast("Configuration imported");
-      goToFeedList();
+      toast("Config imported. Reloading...");
+      setTimeout(()=>location.reload(), 1000);
     }catch(err){ toast("Invalid configuration file"); }
   };
   reader.readAsText(file);
