@@ -347,6 +347,7 @@ fieldset legend {
         <div id="feed-picker" class="hidden" style="margin-top:.8em;">
           <div class="row between" style="margin-bottom:.6em;">
             <select id="feed-picker-account" class="grow" style="margin-right:.4em;"></select>
+            <button id="btn-refresh-feed-list" class="icon" title="Refresh feed list from server" aria-label="Refresh feed list" style="width:36px; height:36px; flex:0 0 36px; font-size:1.2em;">&#x21bb;</button>
             <button id="btn-select-all" class="chip">All</button>
             <button id="btn-deselect-all" class="chip">None</button>
           </div>
@@ -722,7 +723,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.54"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.55"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2566,7 +2567,7 @@ function renderAccountsList() {
     list.innerHTML = `<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">No accounts</div></div>`;
     return;
   }
-  CFG.accounts.forEach(acc => {
+  CFG.accounts.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(acc => {
     const row = document.createElement("div");
     row.className = "account-item";
     const subtitle = acc.type === "local"
@@ -2743,7 +2744,7 @@ function renderRlAccountsList() {
     list.innerHTML = `<div class="empty" style="padding:1em;"><div class="big" style="margin:0;">No accounts</div></div>`;
     return;
   }
-  CFG.readItLaterAccounts.forEach(acc => {
+  CFG.readItLaterAccounts.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(acc => {
     const typeLabel = RIL_ADAPTERS[acc.type].label;
     const row = document.createElement("div");
     row.className = "account-item";
@@ -2949,46 +2950,94 @@ function renderFolderChips(){
 }
 
 let feedPickerChoices = null;
-$("#btn-manage-feeds").addEventListener("click", async ()=>{
-  if(CFG.accounts.length === 0){ toast("Please add an account first."); return; }
-  toast("Loading feeds...");
-  startBgTask();
-  try {
-    feedPickerChoices = new Map();
-    const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
-
-    for (const acc of CFG.accounts) {
-      const feeds = await apiGetFeeds(acc);
-      feeds.forEach(f => {
-        const uid = acc.id + "___" + f.id;
-        const prior = selectedById.get(uid);
-        feedPickerChoices.set(uid, {
-          uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, accountType: acc.type, title: f.title,
-          url: f.url || null,
-          checked: !!prior,
-          categoryTitle: f.categoryTitle || "Uncategorized",
-          folderName: prior ? (prior.folderName || null) : null,
-          contentMode: prior ? (prior.contentMode || "default") : "default"
-        });
-      });
-    }
-
-    const accSelect = $("#feed-picker-account");
-    accSelect.innerHTML = "";
-    CFG.accounts.forEach(acc => {
-      const opt = document.createElement("option");
-      opt.value = acc.id; opt.textContent = acc.name;
-      accSelect.appendChild(opt);
+// Maps a freshly-fetched (or cached) feed catalog into feedPickerChoices.
+// Shared by the initial "Manage feeds" open and the explicit refresh button
+// below. Checks feedPickerChoices itself first (in case the user already
+// toggled a checkbox/folder in this session before triggering a refresh)
+// before falling back to the persisted selection in CFG.selectedFeeds, so
+// a refresh never silently discards in-progress edits.
+function applyFetchedFeedsToPicker(acc, feeds){
+  const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
+  feeds.forEach(f => {
+    const uid = acc.id + "___" + f.id;
+    const existing = feedPickerChoices.get(uid);
+    const prior = selectedById.get(uid);
+    feedPickerChoices.set(uid, {
+      uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, accountType: acc.type, title: f.title,
+      url: f.url || null,
+      checked: existing ? existing.checked : !!prior,
+      categoryTitle: f.categoryTitle || "Uncategorized",
+      folderName: existing ? existing.folderName : (prior ? (prior.folderName || null) : null),
+      contentMode: existing ? existing.contentMode : (prior ? (prior.contentMode || "default") : "default")
     });
+  });
+}
 
-    renderFeedPicker();
-    $("#feed-picker").classList.remove("hidden");
-    toast("Feeds loaded");
-  } catch(e) {
-    toast("Could not load feeds: "+e.message);
-  } finally {
-    endBgTask();
+$("#btn-manage-feeds").addEventListener("click", ()=>{
+  if(CFG.accounts.length === 0){ toast("Please add an account first."); return; }
+  feedPickerChoices = new Map();
+
+  // Local accounts have no network fetch at all (localGetFeeds just reads
+  // account.localFeeds), and any account with a previously-cached catalog
+  // renders immediately from that — "Manage feeds" no longer needs a
+  // network round trip just to open. Only accounts with no cache yet fetch,
+  // and each one is independent: one slow or failing account can't block
+  // the others (including every local account) from showing up right away.
+  const accountsNeedingFetch = [];
+  CFG.accounts.forEach(acc=>{
+    if(acc.type === "local"){
+      applyFetchedFeedsToPicker(acc, localGetFeeds(acc));
+    }else if(acc.cachedFeeds !== undefined){
+      applyFetchedFeedsToPicker(acc, acc.cachedFeeds);
+    }else{
+      accountsNeedingFetch.push(acc);
+    }
+  });
+
+  const accSelect = $("#feed-picker-account");
+  accSelect.innerHTML = "";
+  CFG.accounts.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(acc => {
+    const opt = document.createElement("option");
+    opt.value = acc.id; opt.textContent = acc.name;
+    accSelect.appendChild(opt);
+  });
+
+  renderFeedPicker();
+  $("#feed-picker").classList.remove("hidden");
+
+  if(accountsNeedingFetch.length){
+    toast(`Fetching feeds for ${accountsNeedingFetch.length} account${accountsNeedingFetch.length!==1?"s":""}\u2026`);
   }
+  accountsNeedingFetch.forEach(acc=>{
+    startBgTask();
+    apiGetFeeds(acc).then(feeds=>{
+      acc.cachedFeeds = feeds;
+      acc.cachedFeedsAt = Date.now();
+      saveConfig(CFG);
+      applyFetchedFeedsToPicker(acc, feeds);
+      if($("#feed-picker-account").value === acc.id) renderFeedPicker();
+    }).catch(e=>{
+      toast(`Could not load feeds for "${acc.name}": ${e && e.message}`);
+    }).finally(()=>{ endBgTask(); });
+  });
+});
+
+$("#btn-refresh-feed-list").addEventListener("click", ()=>{
+  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  if(!acc) return;
+  if(acc.type === "local"){ toast("Local feeds don't need refreshing \u2014 edit them directly."); return; }
+  toast(`Refreshing feeds for "${acc.name}"\u2026`);
+  startBgTask();
+  apiGetFeeds(acc).then(feeds=>{
+    acc.cachedFeeds = feeds;
+    acc.cachedFeedsAt = Date.now();
+    saveConfig(CFG);
+    applyFetchedFeedsToPicker(acc, feeds);
+    renderFeedPicker();
+    toast(`Refreshed "${acc.name}"`);
+  }).catch(e=>{
+    toast(`Could not refresh: ${e && e.message}`);
+  }).finally(()=>{ endBgTask(); });
 });
 
 $("#feed-picker-account").addEventListener("change", renderFeedPicker);
