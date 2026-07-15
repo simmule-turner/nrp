@@ -379,13 +379,13 @@ fieldset legend {
           <div id="account-feed-management" class="hidden" style="margin-top:1.2em; padding-top:1em; border-top:1px solid var(--border);">
             <label style="margin-top:0;">Feeds</label>
             <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
-              <button type="button" id="btn-refresh-feed-list" class="icon" title="Refresh feed list from server" aria-label="Refresh feed list" style="width:36px; height:36px; flex:0 0 36px; font-size:1.2em;">&#x21bb;</button>
-              <button type="button" id="btn-select-all" class="chip">All</button>
-              <button type="button" id="btn-deselect-all" class="chip">None</button>
+              <button type="button" id="btn-refresh-feed-list" class="grow" title="Refresh feed list from server" aria-label="Refresh feed list">&#x21bb; Refresh</button>
+              <button type="button" id="btn-select-all" class="grow">All</button>
+              <button type="button" id="btn-deselect-all" class="grow">None</button>
             </div>
             <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
-              <button type="button" id="btn-export-account-opml" class="chip grow">Export OPML</button>
-              <button type="button" id="btn-import-account-opml" class="chip grow hidden">Import OPML</button>
+              <button type="button" id="btn-export-account-opml" class="grow">Export OPML</button>
+              <button type="button" id="btn-import-account-opml" class="grow hidden">Import OPML</button>
               <input type="file" id="file-import-account-opml" class="hidden" accept=".opml,.xml">
             </div>
             <div id="local-feed-add" class="hidden" style="margin-bottom:.8em; padding:.6em; border:1px solid var(--border); border-radius:3px;">
@@ -678,6 +678,25 @@ fieldset legend {
       </fieldset>
 
       <fieldset>
+        <legend id="exportimport-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Export/Import</legend>
+        <div id="exportimport-body" class="collapsible-body">
+        <div class="row wrap">
+          <button id="btn-export-cfg" class="grow">Export Options</button>
+          <button id="btn-import-cfg" class="grow">Import Options</button>
+          <input type="file" id="file-import-cfg" class="hidden" accept=".json">
+        </div>
+        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
+          A full backup: every account (including credentials), every selected feed with its
+          folder, and your appearance/cache settings. Meant for restoring or migrating NRP itself
+          to a new device — import replaces matching settings wholesale rather than merging.
+          Since it includes credentials, treat the exported file like a password. For exporting or
+          importing an individual account's feed list instead, edit that account under Reader
+          Accounts above — OPML export/import lives there now.
+        </p>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend id="logging-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Logging</legend>
         <div id="logging-body" class="collapsible-body">
         <p class="muted" style="font-size:11px; margin:0 0 .6em;">
@@ -698,25 +717,6 @@ fieldset legend {
           before being given up on and logged above. Clearing removes them without retrying further —
           your local read/unread/starred state is unaffected either way, only whether it's ever
           reflected on the server.
-        </p>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend id="dataconfig-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Data &amp; Configuration</legend>
-        <div id="dataconfig-body" class="collapsible-body">
-        <div class="row wrap">
-          <button id="btn-export-cfg" class="grow">Export Options</button>
-          <button id="btn-import-cfg" class="grow">Import Options</button>
-          <input type="file" id="file-import-cfg" class="hidden" accept=".json">
-        </div>
-        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
-          A full backup: every account (including credentials), every selected feed with its
-          folder, and your appearance/cache settings. Meant for restoring or migrating NRP itself
-          to a new device — import replaces matching settings wholesale rather than merging.
-          Since it includes credentials, treat the exported file like a password. For exporting or
-          importing an individual account's feed list instead, edit that account under Reader
-          Accounts above — OPML export/import lives there now.
         </p>
         </div>
       </fieldset>
@@ -777,7 +777,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.66"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.68"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2674,7 +2674,7 @@ setupCollapsibleSection("rl-accounts", "rl-accounts-legend", "rl-accounts-body")
 setupCollapsibleSection("appearance", "appearance-legend", "appearance-body");
 setupCollapsibleSection("cache", "cache-legend", "cache-body");
 setupCollapsibleSection("logging", "logging-legend", "logging-body");
-setupCollapsibleSection("dataconfig", "dataconfig-legend", "dataconfig-body");
+setupCollapsibleSection("exportimport", "exportimport-legend", "exportimport-body");
 
 function populateConfigForm(){
   renderAccountsList();
@@ -2789,7 +2789,7 @@ function createHeaderRow(containerId, key, value){
   valInput.value = value || ""; valInput.style.cssText = "flex:1; height:38px; box-sizing:border-box;";
   const rmBtn = document.createElement("button");
   rmBtn.type = "button"; rmBtn.className = "danger"; rmBtn.title = "Remove header";
-  rmBtn.style.cssText = "width:38px; height:38px; min-height:0; flex:0 0 38px; padding:0; box-sizing:border-box;";
+  rmBtn.style.cssText = "display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; min-height:0; flex:0 0 38px; padding:0; margin:0; line-height:1; box-sizing:border-box;";
   rmBtn.textContent = "\u2715";
   rmBtn.addEventListener("click", ()=>row.remove());
   row.appendChild(keyInput); row.appendChild(valInput); row.appendChild(rmBtn);
