@@ -77,15 +77,15 @@ try{
   }
   input[type=color]{ width:44px; height:32px; border:1px solid var(--border); background:none; padding:0; }
   label{ display:block; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:.9em 0 .3em; }
-  fieldset{ border:1px solid var(--border); border-radius:3px; margin:1em 0; padding:.8em 1em 1.1em; }
+  fieldset{ border:1px solid var(--border); border-radius:3px; margin:0 0 16px; padding:.8em 1em 1.1em; }
   legend{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; padding:0 .4em; color:var(--muted); }
   legend.collapsible{ display:inline-flex; align-items:center; gap:.35em; cursor:pointer; -webkit-user-select:none; user-select:none; }
   .collapsible-body{ margin-top:-15px; }
   .collapsible-body > *:first-child{ margin-top:0 !important; }
-  fieldset.section-collapsed{ padding-top:0; padding-bottom:8px; margin-bottom:12px; }
+  fieldset.section-collapsed{ padding-top:0; padding-bottom:8px; margin:0 0 16px;}
   legend.collapsible .chevron{
     display:inline-flex; align-items:center; justify-content:center;
-    width:1.6em; height:1.6em; flex:0 0 auto; font-size:11px;
+    width:1.6em; height:1.6em; min-height:auto; flex:0 0 auto; font-size:11px;
     background:none; border:none; padding:0; margin:0; color:inherit; font-weight:700; cursor:pointer;
     transform: scale(1.9);
     transform-origin: center center;
@@ -241,7 +241,7 @@ fieldset {
   border: 2px solid #222222; /* Changes the border to a solid, dark color */
   border-radius: 6px;        /* Optional: Rounds the corners slightly */
   padding: 15px;             /* Optional: Adds breathing room inside the box */
-  margin-bottom: 20px;       /* Optional: Adds space below the fieldset */
+  margin: 0 0 16px;          /* Consistent gap below all fieldsets, no margin-top */
   min-width: 0;              /* Browsers give fieldsets an intrinsic min-width
                                  equal to their content's min-content size by
                                  default, which ignores overflow/truncation
@@ -773,7 +773,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.64"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.65"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
