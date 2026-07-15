@@ -684,7 +684,13 @@ fieldset legend {
           <button id="btn-import-cfg" class="grow">Import Options</button>
           <input type="file" id="file-import-cfg" class="hidden" accept=".json">
         </div>
-        <div class="row wrap" style="margin-top:.6em;">
+        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
+          A full backup: every account (including credentials), every selected feed with its
+          folder, and your appearance/cache settings. Meant for restoring or migrating NRP itself
+          to a new device — import replaces matching settings wholesale rather than merging.
+          Since it includes credentials, treat the exported file like a password.
+        </p>
+        <div class="row wrap" style="margin-top:1em;">
           <button id="btn-export-opml" class="grow">Export Feeds (OPML)</button>
           <button id="btn-import-opml" class="grow">Import Feeds (OPML)</button>
           <input type="file" id="file-import-opml" class="hidden" accept=".opml,.xml">
@@ -692,7 +698,9 @@ fieldset legend {
         <p class="muted" style="font-size:11px; margin:.6em 0 0;">
           OPML is a standard format most feed readers can export/import. Exporting includes every
           selected feed (any account type) with its folder. Importing adds feeds into a dedicated
-          local account (creating one named "Imported Feeds" if it doesn't exist yet).
+          local account (creating one named "Imported Feeds" if it doesn't exist yet) — unlike the
+          full backup above, OPML has no concept of accounts/credentials, so this is meant for
+          moving a feed list to/from other readers, not for restoring NRP itself.
         </p>
       </fieldset>
 
@@ -752,7 +760,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.57"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.58"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -3377,7 +3385,15 @@ $("#btn-clear-oversized").addEventListener("click", ()=>{
 /* Import / Export Options */
 $("#btn-export-cfg").addEventListener("click", ()=>{
   const exportCfg = Object.assign({}, CFG);
-  delete exportCfg.selectedFeeds;
+  // feedSort/artSort/collapsedFolders live in their own separate
+  // localStorage keys, not on CFG itself — bundled in here too (under a
+  // __-prefixed name so they're clearly not real CFG fields, and so older
+  // exported files without them still import fine) so a restore is
+  // genuinely complete, not just accounts and feed selections with your
+  // sort order and folder-collapse state reset.
+  exportCfg.__feedSort = feedSort;
+  exportCfg.__artSort = artSort;
+  exportCfg.__collapsedFolders = [...collapsedFolders];
   const data = JSON.stringify(exportCfg, null, 2);
   const blob = new Blob([data], {type:"application/json"});
   const url = URL.createObjectURL(blob);
@@ -3394,7 +3410,31 @@ $("#file-import-cfg").addEventListener("change", e=>{
   reader.onload = e => {
     try{
       const parsed = JSON.parse(e.target.result);
-      delete parsed.selectedFeeds;
+
+      // Bundled preferences from a newer export (see btn-export-cfg above).
+      // Older export files simply won't have these — nothing to restore,
+      // whatever's already set locally is left as-is.
+      if(parsed.__feedSort && parsed.__feedSort.field && parsed.__feedSort.dir){
+        feedSort = parsed.__feedSort;
+        saveSortState(FEED_SORT_KEY, feedSort);
+      }
+      if(parsed.__artSort && parsed.__artSort.field && parsed.__artSort.dir){
+        artSort = parsed.__artSort;
+        saveSortState(ART_SORT_KEY, artSort);
+      }
+      if(Array.isArray(parsed.__collapsedFolders)){
+        collapsedFolders = new Set(parsed.__collapsedFolders);
+        saveCollapsedFolders();
+      }
+      delete parsed.__feedSort; delete parsed.__artSort; delete parsed.__collapsedFolders;
+
+      // selectedFeeds is intentionally included now (previously excluded) —
+      // account credentials already transfer unconditionally, so excluding
+      // just the feed selections/folders/NewsBlur content-mode left a
+      // restore incomplete for no real privacy benefit. Account ids are
+      // plain strings preserved as-is through export/import, so
+      // selectedFeeds' accountId references correctly resolve against the
+      // accounts restored in this same import.
       Object.assign(CFG, parsed);
       saveConfig(CFG);
       // Re-render in place instead of location.reload(): everything a
@@ -3405,6 +3445,12 @@ $("#file-import-cfg").addEventListener("change", e=>{
       populateConfigForm();
       feedPickerChoices = null;
       $("#feed-picker").classList.add("hidden");
+      // populateConfigForm() doesn't touch the topbar sort controls —
+      // reflect any restored sort state there too.
+      $("#feed-sort-field").value = feedSort.field;
+      $("#feed-sort-dir").textContent = feedSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
+      $("#art-sort-field").value = artSort.field;
+      $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
       toast("Configuration imported");
       goToFeedList();
     }catch(err){ toast("Invalid configuration file"); }
