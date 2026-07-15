@@ -79,6 +79,17 @@ try{
   label{ display:block; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:.9em 0 .3em; }
   fieldset{ border:1px solid var(--border); border-radius:3px; margin:1em 0; padding:.8em 1em 1.1em; }
   legend{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; padding:0 .4em; color:var(--muted); }
+  legend.collapsible{ display:inline-flex; align-items:center; gap:.35em; cursor:pointer; -webkit-user-select:none; user-select:none; }
+  .collapsible-body{ margin-top:.9em; }
+  .collapsible-body > *:first-child{ margin-top:0 !important; }
+  fieldset.section-collapsed{ padding-bottom:0; margin-bottom:12px; }
+  legend.collapsible .chevron{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:1.6em; height:1.6em; flex:0 0 auto; font-size:11px;
+    background:none; border:none; padding:0; margin:0; color:inherit; font-weight:700; cursor:pointer;
+    transform: scale(1.9);
+    transform-origin: center center;
+  }
   hr{ border:none; border-top:1px solid var(--border); margin:.9em 0; }
   .row{ display:flex; gap:.6em; align-items:center; }
   .row.between{ justify-content:space-between; }
@@ -311,13 +322,17 @@ fieldset legend {
           <div id="acc-local-fields" class="hidden">
             <p class="muted" style="font-size:11px; margin:0;">
               Local accounts have no central server — NRP fetches each feed's URL directly.
-              Add, edit, or remove feeds from "Manage feeds&hellip;" below. If a feed's server
-              doesn't allow direct browser requests (CORS), enable the API Proxy below.
+              Add, edit, or remove feeds directly below once this account is saved. If a feed's
+              server doesn't allow direct browser requests (CORS), enable the API Proxy below.
             </p>
           </div>
 
           <label for="acc-max">Max items per feed / sync</label>
           <input id="acc-max" type="number" min="1" step="1" value="50">
+          <div class="row between" style="margin-top:1em;">
+            <label style="margin:0;">Hide feeds with no unread articles</label>
+            <input id="acc-hide-empty-feeds" type="checkbox">
+          </div>
           <hr>
           <label style="margin-top:0;">API Proxy (Miniflux/NewsBlur requests)</label>
           <div class="row between">
@@ -352,52 +367,47 @@ fieldset legend {
             <button type="button" id="acc-nonapi-proxy-add-header" class="chip">+ Add header</button>
           </div>
 
+          <hr>
+          <label for="cfg-folder-mode" style="margin-top:0;">Group feeds into folders</label>
+          <select id="cfg-folder-mode">
+            <option value="none">No folders (flat list)</option>
+            <option value="manual">Manual folders</option>
+            <option value="miniflux">Mirror service categories</option>
+          </select>
+
+          <div id="account-feed-management" class="hidden" style="margin-top:1.2em; padding-top:1em; border-top:1px solid var(--border);">
+            <label style="margin-top:0;">Feeds</label>
+            <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
+              <button type="button" id="btn-refresh-feed-list" class="icon" title="Refresh feed list from server" aria-label="Refresh feed list" style="width:36px; height:36px; flex:0 0 36px; font-size:1.2em;">&#x21bb;</button>
+              <button type="button" id="btn-select-all" class="chip">All</button>
+              <button type="button" id="btn-deselect-all" class="chip">None</button>
+            </div>
+            <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
+              <button type="button" id="btn-export-account-opml" class="chip grow">Export OPML</button>
+              <button type="button" id="btn-import-account-opml" class="chip grow hidden">Import OPML</button>
+              <input type="file" id="file-import-account-opml" class="hidden" accept=".opml,.xml">
+            </div>
+            <div id="local-feed-add" class="hidden" style="margin-bottom:.8em; padding:.6em; border:1px solid var(--border); border-radius:3px;">
+              <label for="local-feed-url" style="margin-top:0;">Add feed URL</label>
+              <input id="local-feed-url" type="url" placeholder="https://example.com/feed.xml">
+              <div class="row" style="margin-top:.5em;">
+                <button type="button" id="btn-add-local-feed" class="chip grow">+ Add feed</button>
+              </div>
+            </div>
+            <div id="account-manual-folder-ui" class="hidden" style="margin-bottom:.8em;">
+              <div class="row">
+                <input id="new-folder-name" type="text" placeholder="New folder name" class="grow">
+                <button type="button" id="btn-add-folder">Add</button>
+              </div>
+              <div id="folder-chip-list" class="row wrap" style="margin-top:.6em; gap:.4em;"></div>
+            </div>
+            <div id="feed-picker-list" class="chk-list"></div>
+          </div>
+
           <div class="row wrap" style="margin-top:1em;">
             <button id="btn-save-account" class="primary grow">Save Account</button>
             <button id="btn-cancel-account" class="grow">Cancel</button>
           </div>
-        </div>
-
-        <div class="row" style="margin-top:1.2em;">
-          <button id="btn-manage-feeds" class="grow">Manage feeds&hellip;</button>
-        </div>
-        <div id="feed-picker" class="hidden" style="margin-top:.8em;">
-          <div class="row between" style="margin-bottom:.6em;">
-            <select id="feed-picker-account" class="grow" style="margin-right:.4em;"></select>
-            <button id="btn-refresh-feed-list" class="icon" title="Refresh feed list from server" aria-label="Refresh feed list" style="width:36px; height:36px; flex:0 0 36px; font-size:1.2em;">&#x21bb;</button>
-            <button id="btn-select-all" class="chip">All</button>
-            <button id="btn-deselect-all" class="chip">None</button>
-          </div>
-          <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
-            <button id="btn-export-account-opml" class="chip grow">Export OPML</button>
-            <button id="btn-import-account-opml" class="chip grow hidden">Import OPML</button>
-            <input type="file" id="file-import-account-opml" class="hidden" accept=".opml,.xml">
-          </div>
-          <div id="local-feed-add" class="hidden" style="margin-bottom:.8em; padding:.6em; border:1px solid var(--border); border-radius:3px;">
-            <label for="local-feed-url" style="margin-top:0;">Add feed URL</label>
-            <input id="local-feed-url" type="url" placeholder="https://example.com/feed.xml">
-            <div class="row" style="margin-top:.5em;">
-              <button type="button" id="btn-add-local-feed" class="chip grow">+ Add feed</button>
-            </div>
-          </div>
-          <div id="feed-picker-list" class="chk-list"></div>
-        </div>
-        <label for="cfg-folder-mode">Group feeds into folders</label>
-        <select id="cfg-folder-mode">
-          <option value="none">No folders (flat list)</option>
-          <option value="manual">Manual folders</option>
-          <option value="miniflux">Mirror service categories</option>
-        </select>
-        <div id="manual-folder-ui" class="hidden" style="margin-top:.8em;">
-          <div class="row">
-            <input id="new-folder-name" type="text" placeholder="New folder name" class="grow">
-            <button id="btn-add-folder">Add</button>
-          </div>
-          <div id="folder-chip-list" class="row wrap" style="margin-top:.6em; gap:.4em;"></div>
-        </div>
-        <div class="row between" style="margin-top:1em;">
-          <label style="margin:0;">Hide feeds with no unread articles</label>
-          <input id="cfg-hide-empty-feeds" type="checkbox">
         </div>
       </fieldset>
       <fieldset>
@@ -468,7 +478,8 @@ fieldset legend {
       </fieldset>
 
       <fieldset>
-        <legend>Appearance</legend>
+        <legend id="appearance-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Appearance</legend>
+        <div id="appearance-body" class="collapsible-body">
         <label for="cfg-toolbar-placement">Toolbar placement</label>
         <select id="cfg-toolbar-placement">
           <option value="top">Top</option>
@@ -620,9 +631,11 @@ fieldset legend {
         <div class="row" style="margin-top:.6em;">
           <button id="preset-defaults" class="grow chip">Reset to defaults</button>
         </div>
+        </div>
       </fieldset>
       <fieldset>
-        <legend>Cache</legend>
+        <legend id="cache-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Cache</legend>
+        <div id="cache-body" class="collapsible-body">
         <label for="cfg-image-cache-mode">Image caching</label>
         <select id="cfg-image-cache-mode">
           <option value="all">Cache all images on sync</option>
@@ -657,10 +670,12 @@ fieldset legend {
           Clearing removes all cached articles, images, thumbnails, and pending sync actions,
           but keeps your selected feeds so the next sync starts fresh.
         </p>
+        </div>
       </fieldset>
 
       <fieldset>
-        <legend>Logging</legend>
+        <legend id="logging-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Logging</legend>
+        <div id="logging-body" class="collapsible-body">
         <p class="muted" style="font-size:11px; margin:0 0 .6em;">
           A lightweight diagnostic log for troubleshooting: images too large to cache in full (re-fetched from the network each time they're shown, though thumbnails for these are still cached where possible), plus thumbnail-generation tracing and other app events.
         </p>
@@ -680,10 +695,12 @@ fieldset legend {
           your local read/unread/starred state is unaffected either way, only whether it's ever
           reflected on the server.
         </p>
+        </div>
       </fieldset>
 
       <fieldset>
-        <legend>Data &amp; Configuration</legend>
+        <legend id="dataconfig-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Data &amp; Configuration</legend>
+        <div id="dataconfig-body" class="collapsible-body">
         <div class="row wrap">
           <button id="btn-export-cfg" class="grow">Export Options</button>
           <button id="btn-import-cfg" class="grow">Import Options</button>
@@ -694,8 +711,10 @@ fieldset legend {
           folder, and your appearance/cache settings. Meant for restoring or migrating NRP itself
           to a new device — import replaces matching settings wholesale rather than merging.
           Since it includes credentials, treat the exported file like a password. For exporting or
-          importing an individual account's feed list instead, see "Manage feeds&hellip;" above.
+          importing an individual account's feed list instead, edit that account under Reader
+          Accounts above — OPML export/import lives there now.
         </p>
+        </div>
       </fieldset>
 
       <p class="muted" style="text-align:center; font-size:11px; margin:1.4em 0 0;">NRP <span id="app-version-label"></span></p>
@@ -754,7 +773,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.59"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.62"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -837,6 +856,16 @@ function loadConfig(){
     delete parsed.wallabagUrl; delete parsed.wallabagClientId; delete parsed.wallabagClientSecret;
     delete parsed.wallabagUsername; delete parsed.wallabagPassword; delete parsed.wallabagAccessToken;
     delete parsed.wallabagRefreshToken; delete parsed.wallabagTokenExpiry;
+
+    // Migration: hideEmptyFeeds used to be one global flag; now it's a
+    // per-account setting. If the old global flag was on, carry that
+    // forward as each account's starting value rather than silently
+    // resetting everyone to "off".
+    if(parsed.hideEmptyFeeds === true && parsed.accounts){
+      parsed.accounts.forEach(acc=>{
+        if(acc.hideEmptyFeeds === undefined) acc.hideEmptyFeeds = true;
+      });
+    }
 
     return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
@@ -2609,6 +2638,38 @@ function showPopupMenu({id, anchorEl, items, align, minWidth}){
 }
 
 /* ============================= CONFIG SCREEN LOGIC ============================= */
+// Collapsible settings sections (Appearance, Cache) — same pattern as the
+// feed-list folder collapse: a chevron toggle, state persisted so it
+// survives reopening Settings, default expanded so nothing changes for
+// anyone who never touches it.
+const SETTINGS_COLLAPSED_KEY = "nrp_collapsed_settings";
+let collapsedSettings = loadCollapsedSettings();
+function loadCollapsedSettings(){
+  try{ return new Set(JSON.parse(localStorage.getItem(SETTINGS_COLLAPSED_KEY)||"[]")); }catch(e){ return new Set(); }
+}
+function saveCollapsedSettings(){ localStorage.setItem(SETTINGS_COLLAPSED_KEY, JSON.stringify([...collapsedSettings])); }
+function setupCollapsibleSection(key, legendId, bodyId){
+  const legend = $("#"+legendId);
+  const body = $("#"+bodyId);
+  const fieldset = legend.closest("fieldset");
+  const chevron = legend.querySelector(".chevron");
+  const isCollapsed = collapsedSettings.has(key);
+  body.classList.toggle("hidden", isCollapsed);
+  fieldset.classList.toggle("section-collapsed", isCollapsed);
+  chevron.textContent = isCollapsed ? "\u25B8" : "\u25BE";
+  legend.addEventListener("click", ()=>{
+    const nowCollapsed = body.classList.toggle("hidden");
+    fieldset.classList.toggle("section-collapsed", nowCollapsed);
+    chevron.textContent = nowCollapsed ? "\u25B8" : "\u25BE";
+    if(nowCollapsed) collapsedSettings.add(key); else collapsedSettings.delete(key);
+    saveCollapsedSettings();
+  });
+}
+setupCollapsibleSection("appearance", "appearance-legend", "appearance-body");
+setupCollapsibleSection("cache", "cache-legend", "cache-body");
+setupCollapsibleSection("logging", "logging-legend", "logging-body");
+setupCollapsibleSection("dataconfig", "dataconfig-legend", "dataconfig-body");
+
 function populateConfigForm(){
   renderAccountsList();
   renderRlAccountsList();
@@ -2647,8 +2708,6 @@ function populateConfigForm(){
 
   $("#cfg-folder-mode").value = CFG.folderMode;
   $("#cfg-toolbar-placement").value = CFG.toolbarPlacement || "top";
-  $("#cfg-hide-empty-feeds").checked = !!CFG.hideEmptyFeeds;
-  $("#manual-folder-ui").classList.toggle("hidden", CFG.folderMode !== "manual");
   renderFolderChips();
 
   refreshStartupOptions();
@@ -2692,15 +2751,22 @@ $("#btn-add-account").addEventListener("click", () => {
   $("#acc-url").value = "";
   $("#acc-token").value = "";
   $("#acc-max").value = "25";
+  $("#acc-hide-empty-feeds").checked = false;
   populateProxyFields("acc-api-proxy", "api", null);
   populateProxyFields("acc-nonapi-proxy", "nonApi", null);
   $("#acc-type").dispatchEvent(new Event("change"));
+  // No feed management for a brand-new, not-yet-saved account — there's no
+  // persisted account id yet for feeds to attach to.
+  feedPickerChoices = null;
+  $("#account-feed-management").classList.add("hidden");
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
 });
 
 $("#btn-cancel-account").addEventListener("click", () => {
   $("#account-form").classList.add("hidden");
+  $("#account-feed-management").classList.add("hidden");
+  feedPickerChoices = null;
   $("#btn-add-account").classList.remove("hidden");
 });
 
@@ -2711,12 +2777,13 @@ function createHeaderRow(containerId, key, value){
   row.style.marginTop = ".4em";
   const keyInput = document.createElement("input");
   keyInput.type = "text"; keyInput.placeholder = "Header name"; keyInput.className = "hdr-key";
-  keyInput.value = key || ""; keyInput.style.flex = "1";
+  keyInput.value = key || ""; keyInput.style.cssText = "flex:1; height:38px; box-sizing:border-box;";
   const valInput = document.createElement("input");
   valInput.type = "text"; valInput.placeholder = "Header value"; valInput.className = "hdr-val";
-  valInput.value = value || ""; valInput.style.flex = "1";
+  valInput.value = value || ""; valInput.style.cssText = "flex:1; height:38px; box-sizing:border-box;";
   const rmBtn = document.createElement("button");
-  rmBtn.type = "button"; rmBtn.className = "icon danger"; rmBtn.title = "Remove header";
+  rmBtn.type = "button"; rmBtn.className = "danger"; rmBtn.title = "Remove header";
+  rmBtn.style.cssText = "width:38px; height:38px; min-height:0; flex:0 0 38px; padding:0; box-sizing:border-box;";
   rmBtn.textContent = "\u2715";
   rmBtn.addEventListener("click", ()=>row.remove());
   row.appendChild(keyInput); row.appendChild(valInput); row.appendChild(rmBtn);
@@ -2770,8 +2837,9 @@ $("#acc-type").addEventListener("change", (e) => {
 });
 
 // REPLACE:
-$("#btn-save-account").addEventListener("click", () => {
+$("#btn-save-account").addEventListener("click", async () => {
   const id = $("#acc-form-id").value || ("acc_" + Date.now());
+  const isNewAccount = !$("#acc-form-id").value;
   const type = $("#acc-type").value;
   const existing = CFG.accounts.find(a => a.id === id) || {};
   const acc = {
@@ -2780,6 +2848,7 @@ $("#btn-save-account").addEventListener("click", () => {
     name: $("#acc-name").value.trim() || type,
     url: type === "local" ? "" : $("#acc-url").value.trim(),
     maxItems: parseInt($("#acc-max").value, 10) || 50,
+    hideEmptyFeeds: $("#acc-hide-empty-feeds").checked,
     ...readProxyFields("acc-api-proxy", "api"),
     ...readProxyFields("acc-nonapi-proxy", "nonApi")
   };
@@ -2789,18 +2858,47 @@ $("#btn-save-account").addEventListener("click", () => {
     return;
   }
   if(acc.type === "local"){
-    // Feeds themselves are managed from "Manage feeds..." (add/edit/delete
-    // there commit immediately) — preserve whatever's already there across
-    // an account-details edit.
+    // Feeds themselves are managed inline below (add/edit/delete there
+    // commit immediately) — preserve whatever's already there across an
+    // account-details edit.
     acc.localFeeds = existing.localFeeds || [];
   }
+  // Preserve the cached feed catalog (Miniflux/NewsBlur) across an edit —
+  // re-saving account details shouldn't force a re-fetch next time.
+  acc.cachedFeeds = existing.cachedFeeds;
+  acc.cachedFeedsAt = existing.cachedFeedsAt;
 
-  const existingIdx = CFG.accounts.findIndex(a => a.id === id);       if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
+  const existingIdx = CFG.accounts.findIndex(a => a.id === id);
+  if(existingIdx >= 0) CFG.accounts[existingIdx] = acc;
   else CFG.accounts.push(acc);
 
-  saveConfig(CFG);
-  renderAccountsList();
-  $("#btn-cancel-account").click();
+  // Commit this account's feed selections too, merged into the rest of
+  // CFG.selectedFeeds (not replacing it wholesale — feedPickerChoices only
+  // ever holds one account's feeds at a time now, since feed management is
+  // scoped to whichever account is currently being edited).
+  if(feedPickerChoices && !isNewAccount){
+    const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({
+      id: f.uid, rawId: f.rawId, accountId: f.accountId, title: f.title, url: f.url || null,
+      folderName: CFG.folderMode==="miniflux" ? (f.categoryTitle||null)
+                : CFG.folderMode==="manual" ? (f.folderName||null) : null,
+      contentMode: f.contentMode || "default"
+    }));
+    const previousIdsForAcc = new Set(CFG.selectedFeeds.filter(f=>f.accountId===id).map(f=>f.id));
+    const nowIdsForAcc = new Set(nowSelected.map(f=>f.id));
+    const removedIds = [...previousIdsForAcc].filter(fid=>!nowIdsForAcc.has(fid));
+    const addedFeeds = nowSelected.filter(f=>!previousIdsForAcc.has(f.id));
+    CFG.selectedFeeds = CFG.selectedFeeds.filter(f => f.accountId !== id).concat(nowSelected);
+    saveConfig(CFG);
+    renderAccountsList();
+    $("#btn-cancel-account").click();
+    for(const fid of removedIds){ await removeFeed(fid).catch(()=>{}); }
+    for(const f of addedFeeds){ await syncFeed(f).catch(()=>{}); }
+    renderFeedList();
+  }else{
+    saveConfig(CFG);
+    renderAccountsList();
+    $("#btn-cancel-account").click();
+  }
 });
 
 window.editAccount = (id) => {
@@ -2812,11 +2910,18 @@ window.editAccount = (id) => {
   $("#acc-url").value = acc.url;
   $("#acc-max").value = acc.maxItems;
   $("#acc-token").value = acc.token || "";
+  $("#acc-hide-empty-feeds").checked = !!acc.hideEmptyFeeds;
   populateProxyFields("acc-api-proxy", "api", acc);
   populateProxyFields("acc-nonapi-proxy", "nonApi", acc);
   $("#acc-type").dispatchEvent(new Event("change"));
   $("#account-form").classList.remove("hidden");
   $("#btn-add-account").classList.add("hidden");
+
+  // Feed management only makes sense for an account that already exists —
+  // load it inline, right here, instead of a separate "Manage feeds..."
+  // button/screen.
+  $("#account-feed-management").classList.remove("hidden");
+  loadFeedManagementForAccount(acc);
 };
 
 window.deleteAccount = async (id) => {
@@ -2827,7 +2932,7 @@ window.deleteAccount = async (id) => {
   saveConfig(CFG);
   renderAccountsList();
 
-  $("#feed-picker").classList.add("hidden");
+  $("#account-feed-management").classList.add("hidden");
   feedPickerChoices = null;
 
   let cleanupFailures = 0;
@@ -2959,9 +3064,15 @@ window.deleteRlAccount = (id) => {
 };
 
 function refreshStartupOptions(){
-  const source = feedPickerChoices
-    ? [...feedPickerChoices.values()].filter(f=>f.checked)
-    : CFG.selectedFeeds;
+  const editingAccId = $("#acc-form-id").value;
+  let source;
+  if(feedPickerChoices && editingAccId){
+    const others = CFG.selectedFeeds.filter(f => f.accountId !== editingAccId);
+    const current = [...feedPickerChoices.values()].filter(f=>f.checked);
+    source = others.concat(current);
+  }else{
+    source = CFG.selectedFeeds;
+  }
   const startupSel = $("#cfg-startup-mode");
   const prevValue = startupSel.value || CFG.startupMode;
   startupSel.innerHTML = "";
@@ -3021,7 +3132,6 @@ $("#preset-defaults").addEventListener("click", ()=>{
 });
 
 $("#cfg-folder-mode").addEventListener("change", ()=>{
-  $("#manual-folder-ui").classList.toggle("hidden", $("#cfg-folder-mode").value !== "manual");
   if(feedPickerChoices) renderFeedPicker();
 });
 $("#btn-add-folder").addEventListener("click", ()=>{
@@ -3077,57 +3187,42 @@ function applyFetchedFeedsToPicker(acc, feeds){
   });
 }
 
-$("#btn-manage-feeds").addEventListener("click", ()=>{
-  if(CFG.accounts.length === 0){ toast("Please add an account first."); return; }
+// Loads (or reuses the cache for) one account's feed catalog into
+// feedPickerChoices and renders it inline. Called from editAccount() —
+// replaces the old "Manage feeds..." button, which used to loop over
+// every account behind a separate dropdown. Local accounts and any
+// account with a previously-cached catalog render instantly with no
+// network call; an account with no cache yet fetches in the background
+// without blocking the rest of the edit form from being usable.
+function loadFeedManagementForAccount(acc){
   feedPickerChoices = new Map();
-
-  // Local accounts have no network fetch at all (localGetFeeds just reads
-  // account.localFeeds), and any account with a previously-cached catalog
-  // renders immediately from that — "Manage feeds" no longer needs a
-  // network round trip just to open. Only accounts with no cache yet fetch,
-  // and each one is independent: one slow or failing account can't block
-  // the others (including every local account) from showing up right away.
-  const accountsNeedingFetch = [];
-  CFG.accounts.forEach(acc=>{
-    if(acc.type === "local"){
-      applyFetchedFeedsToPicker(acc, localGetFeeds(acc));
-    }else if(acc.cachedFeeds !== undefined){
-      applyFetchedFeedsToPicker(acc, acc.cachedFeeds);
-    }else{
-      accountsNeedingFetch.push(acc);
-    }
-  });
-
-  const accSelect = $("#feed-picker-account");
-  accSelect.innerHTML = "";
-  CFG.accounts.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(acc => {
-    const opt = document.createElement("option");
-    opt.value = acc.id; opt.textContent = acc.name;
-    accSelect.appendChild(opt);
-  });
-
-  renderFeedPicker();
-  $("#feed-picker").classList.remove("hidden");
-
-  if(accountsNeedingFetch.length){
-    toast(`Fetching feeds for ${accountsNeedingFetch.length} account${accountsNeedingFetch.length!==1?"s":""}\u2026`);
+  if(acc.type === "local"){
+    applyFetchedFeedsToPicker(acc, localGetFeeds(acc));
+  }else if(acc.cachedFeeds !== undefined){
+    applyFetchedFeedsToPicker(acc, acc.cachedFeeds);
   }
-  accountsNeedingFetch.forEach(acc=>{
+  renderFeedPicker();
+
+  if(acc.type !== "local" && acc.cachedFeeds === undefined){
+    toast(`Fetching feeds for "${acc.name}"\u2026`);
     startBgTask();
     apiGetFeeds(acc).then(feeds=>{
       acc.cachedFeeds = feeds;
       acc.cachedFeedsAt = Date.now();
       saveConfig(CFG);
       applyFetchedFeedsToPicker(acc, feeds);
-      if($("#feed-picker-account").value === acc.id) renderFeedPicker();
+      // Only re-render if still editing this same account — the user may
+      // have already cancelled or moved on to another one by the time this
+      // resolves.
+      if($("#acc-form-id").value === acc.id) renderFeedPicker();
     }).catch(e=>{
       toast(`Could not load feeds for "${acc.name}": ${e && e.message}`);
     }).finally(()=>{ endBgTask(); });
-  });
-});
+  }
+}
 
 $("#btn-refresh-feed-list").addEventListener("click", ()=>{
-  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  const acc = CFG.accounts.find(a => a.id === $("#acc-form-id").value);
   if(!acc) return;
   if(acc.type === "local"){ toast("Local feeds don't need refreshing \u2014 edit them directly."); return; }
   toast(`Refreshing feeds for "${acc.name}"\u2026`);
@@ -3144,18 +3239,17 @@ $("#btn-refresh-feed-list").addEventListener("click", ()=>{
   }).finally(()=>{ endBgTask(); });
 });
 
-$("#feed-picker-account").addEventListener("change", renderFeedPicker);
 
 $("#btn-select-all").addEventListener("click", () => {
   if(!feedPickerChoices) return;
-  const activeAccId = $("#feed-picker-account").value;
+  const activeAccId = $("#acc-form-id").value;
   [...feedPickerChoices.values()].filter(f => f.accountId === activeAccId).forEach(f => f.checked = true);
   renderFeedPicker();
 });
 
 $("#btn-deselect-all").addEventListener("click", () => {
   if(!feedPickerChoices) return;
-  const activeAccId = $("#feed-picker-account").value;
+  const activeAccId = $("#acc-form-id").value;
   [...feedPickerChoices.values()].filter(f => f.accountId === activeAccId).forEach(f => f.checked = false);
   renderFeedPicker();
 });
@@ -3197,7 +3291,7 @@ async function addLocalFeedToAccount(account){
   }
 }
 $("#btn-add-local-feed").addEventListener("click", ()=>{
-  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  const acc = CFG.accounts.find(a => a.id === $("#acc-form-id").value);
   if(acc) addLocalFeedToAccount(acc);
 });
 
@@ -3265,11 +3359,12 @@ function showContentModeMenu(f, anchorEl){
 function renderFeedPicker(){
   const list = $("#feed-picker-list");
   list.innerHTML = "";
-  const activeAccId = $("#feed-picker-account").value;
+  const activeAccId = $("#acc-form-id").value;
   if(!feedPickerChoices || !activeAccId) return;
   const activeAccount = CFG.accounts.find(a => a.id === activeAccId);
   $("#local-feed-add").classList.toggle("hidden", !activeAccount || activeAccount.type !== "local");
   $("#btn-import-account-opml").classList.toggle("hidden", !activeAccount || activeAccount.type !== "local");
+  $("#account-manual-folder-ui").classList.toggle("hidden", !activeAccount || activeAccount.type !== "local" || CFG.folderMode !== "manual");
 
   [...feedPickerChoices.values()]
     .filter(f => f.accountId === activeAccId)
@@ -3281,7 +3376,7 @@ function renderFeedPicker(){
     cb.type = "checkbox"; cb.checked = f.checked;
     cb.addEventListener("change", ()=>{ f.checked = cb.checked; refreshStartupOptions(); });
     const lab = document.createElement("div"); lab.className = "grow";
-    lab.innerHTML = `<div>${escapeHtml(f.title)}</div><div style="font-size:10px; color:var(--muted);">${escapeHtml(f.accountName)}</div>`;
+    lab.innerHTML = `<div>${escapeHtml(f.title)}</div>`;
     if(f.accountType === "newsblur"){
       const modeLabels = {default:"Feed view", original_text:"Text view", original_story:"Original view"};
       const modeLine = document.createElement("div");
@@ -3439,7 +3534,7 @@ $("#file-import-cfg").addEventListener("change", e=>{
       setupManifest();
       populateConfigForm();
       feedPickerChoices = null;
-      $("#feed-picker").classList.add("hidden");
+      $("#account-feed-management").classList.add("hidden");
       // populateConfigForm() doesn't touch the topbar sort controls —
       // reflect any restored sort state there too.
       $("#feed-sort-field").value = feedSort.field;
@@ -3479,7 +3574,7 @@ function buildOpml(accountId){
   return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n<head><title>NRP Feeds</title></head>\n<body>\n${body}</body>\n</opml>\n`;
 }
 $("#btn-export-account-opml").addEventListener("click", ()=>{
-  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  const acc = CFG.accounts.find(a => a.id === $("#acc-form-id").value);
   if(!acc) return;
   const blob = new Blob([buildOpml(acc.id)], {type:"text/x-opml"});
   const url = URL.createObjectURL(blob);
@@ -3538,7 +3633,7 @@ $("#file-import-account-opml").addEventListener("change", e=>{
   const file = e.target.files[0];
   e.target.value = ""; // allow re-selecting the same file consecutively
   if(!file) return;
-  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  const acc = CFG.accounts.find(a => a.id === $("#acc-form-id").value);
   if(!acc || acc.type !== "local"){ toast("Select a local account first"); return; }
   const reader = new FileReader();
   reader.onload = ev => {
@@ -3593,28 +3688,9 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
   CFG.toolbarPlacement = $("#cfg-toolbar-placement").value;
-  CFG.hideEmptyFeeds = $("#cfg-hide-empty-feeds").checked;
 
-  const previouslySelected = new Set(CFG.selectedFeeds.map(f=>f.id));
-  if(feedPickerChoices){
-    const nowSelected = [...feedPickerChoices.values()].filter(f=>f.checked).map(f=>({
-      id: f.uid, rawId: f.rawId, accountId: f.accountId, title: f.title, url: f.url || null,
-      folderName: CFG.folderMode==="miniflux" ? (f.categoryTitle||null)
-                : CFG.folderMode==="manual" ? (f.folderName||null) : null,
-      contentMode: f.contentMode || "default"
-    }));
-    const nowIds = new Set(nowSelected.map(f=>f.id));
-    const removedIds = [...previouslySelected].filter(id=>!nowIds.has(id));
-    CFG.selectedFeeds = nowSelected;
-    saveConfig(CFG);
-    applyTheme(); setupManifest();
-    for(const id of removedIds){ await removeFeed(id); }
-    const addedFeeds = nowSelected.filter(f=>!previouslySelected.has(f.id));
-    for(const f of addedFeeds){ await syncFeed(f).catch(()=>{}); }
-  }else{
-    saveConfig(CFG);
-    applyTheme(); setupManifest();
-  }
+  saveConfig(CFG);
+  applyTheme(); setupManifest();
   toast("Configuration saved");
   goToFeedList();
 });
@@ -3777,15 +3853,17 @@ async function renderFeedList(){
   const cached = await idbGetAll("feedsCache");
   const byId = new Map(cached.map(c=>[c.id, c]));
   let rows = CFG.selectedFeeds.map(f=>({
-    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0, folderName:f.folderName||null
+    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0, folderName:f.folderName||null, accountId:f.accountId
   }));
-  if(CFG.hideEmptyFeeds){
-    rows = rows.filter(r=>r.unread>0);
-  }
+  rows = rows.filter(r=>{
+    if(r.unread>0) return true;
+    const acc = CFG.accounts.find(a=>a.id===r.accountId);
+    return !(acc && acc.hideEmptyFeeds);
+  });
   const container = $("#feed-list");
   container.innerHTML = "";
   if(rows.length===0){
-    const msg = (CFG.hideEmptyFeeds && CFG.selectedFeeds.length>0)
+    const msg = (CFG.selectedFeeds.length>0)
       ? '<div class="empty"><div class="big">All caught up</div>No unread articles right now.</div>'
       : '<div class="empty"><div class="big">No feeds selected</div>Open Settings to choose feeds.</div>';
     container.innerHTML = msg;
