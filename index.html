@@ -397,8 +397,8 @@ fieldset legend {
             </div>
             <div id="account-manual-folder-ui" class="hidden" style="margin-bottom:.8em;">
               <div class="row">
-                <input id="new-folder-name" type="text" placeholder="New folder name" class="grow">
-                <button type="button" id="btn-add-folder">Add</button>
+                <input id="new-folder-name" type="text" placeholder="New folder name" class="grow" style="height:38px; box-sizing:border-box;">
+                <button type="button" id="btn-add-folder" style="display:inline-flex; align-items:center; justify-content:center; height:38px; min-height:0; flex:0 0 auto; padding:0 .9em; line-height:1; box-sizing:border-box;">Add</button>
               </div>
               <div id="folder-chip-list" class="row wrap" style="margin-top:.6em; gap:.4em;"></div>
             </div>
@@ -777,7 +777,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.69"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.70"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -3382,7 +3382,7 @@ function renderFeedPicker(){
     cb.type = "checkbox"; cb.checked = f.checked;
     cb.addEventListener("change", ()=>{ f.checked = cb.checked; refreshStartupOptions(); });
     const lab = document.createElement("div"); lab.className = "grow";
-    lab.innerHTML = `<div>${escapeHtml(f.title)}</div>`;
+    lab.innerHTML = `<div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(f.title)}</div>`;
     if(f.accountType === "newsblur"){
       const modeLabels = {default:"Feed view", original_text:"Text view", original_story:"Original view"};
       const modeLine = document.createElement("div");
@@ -3395,20 +3395,27 @@ function renderFeedPicker(){
     row.appendChild(cb); row.appendChild(lab);
 
     if(f.accountType === "local"){
-      const actions = document.createElement("div");
-      actions.className = "row"; actions.style.cssText = "flex:0 0 auto; gap:.2em;";
-      const editBtn = document.createElement("button");
-      editBtn.type = "button"; editBtn.className = "icon"; editBtn.title = "Edit feed";
-      editBtn.style.cssText = "width:36px; height:36px; flex:0 0 36px; font-size:1em;";
-      editBtn.textContent = "\u270E";
-      editBtn.addEventListener("click", ()=>editLocalFeed(f));
-      const delBtn = document.createElement("button");
-      delBtn.type = "button"; delBtn.className = "icon danger"; delBtn.title = "Delete feed";
-      delBtn.style.cssText = "width:36px; height:36px; flex:0 0 36px; font-size:1em;";
-      delBtn.textContent = "\u{1F5D1}";
-      delBtn.addEventListener("click", ()=>deleteLocalFeed(f));
-      actions.appendChild(editBtn); actions.appendChild(delBtn);
-      row.appendChild(actions);
+      row.style.cssText += "-webkit-touch-callout:none; -webkit-user-select:none; user-select:none;";
+      // Deliberately no visible edit/delete buttons here — those made
+      // local feed rows wider and visually different from Miniflux/
+      // NewsBlur rows. Long-press instead, same pattern already used for
+      // feed-folder headers, so every row looks identical regardless of
+      // account type; the actions are still there, just not taking up
+      // permanent row space for something used occasionally.
+      attachLongPress(row, {
+        onLongPress: ()=>{
+          if(navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
+          showPopupMenu({
+            id: "local-feed-row-menu",
+            anchorEl: row,
+            items: [
+              {label: "Edit feed", onClick: ()=>editLocalFeed(f)},
+              {label: "Delete feed", onClick: ()=>deleteLocalFeed(f)}
+            ]
+          });
+        },
+        excludeSelector: "input"
+      });
     }
 
     if(CFG.folderMode === "manual"){
