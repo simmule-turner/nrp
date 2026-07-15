@@ -368,6 +368,11 @@ fieldset legend {
             <button id="btn-select-all" class="chip">All</button>
             <button id="btn-deselect-all" class="chip">None</button>
           </div>
+          <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
+            <button id="btn-export-account-opml" class="chip grow">Export OPML</button>
+            <button id="btn-import-account-opml" class="chip grow hidden">Import OPML</button>
+            <input type="file" id="file-import-account-opml" class="hidden" accept=".opml,.xml">
+          </div>
           <div id="local-feed-add" class="hidden" style="margin-bottom:.8em; padding:.6em; border:1px solid var(--border); border-radius:3px;">
             <label for="local-feed-url" style="margin-top:0;">Add feed URL</label>
             <input id="local-feed-url" type="url" placeholder="https://example.com/feed.xml">
@@ -688,19 +693,8 @@ fieldset legend {
           A full backup: every account (including credentials), every selected feed with its
           folder, and your appearance/cache settings. Meant for restoring or migrating NRP itself
           to a new device — import replaces matching settings wholesale rather than merging.
-          Since it includes credentials, treat the exported file like a password.
-        </p>
-        <div class="row wrap" style="margin-top:1em;">
-          <button id="btn-export-opml" class="grow">Export Feeds (OPML)</button>
-          <button id="btn-import-opml" class="grow">Import Feeds (OPML)</button>
-          <input type="file" id="file-import-opml" class="hidden" accept=".opml,.xml">
-        </div>
-        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
-          OPML is a standard format most feed readers can export/import. Exporting includes every
-          selected feed (any account type) with its folder. Importing adds feeds into a dedicated
-          local account (creating one named "Imported Feeds" if it doesn't exist yet) — unlike the
-          full backup above, OPML has no concept of accounts/credentials, so this is meant for
-          moving a feed list to/from other readers, not for restoring NRP itself.
+          Since it includes credentials, treat the exported file like a password. For exporting or
+          importing an individual account's feed list instead, see "Manage feeds&hellip;" above.
         </p>
       </fieldset>
 
@@ -760,7 +754,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.58"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.59"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -3275,6 +3269,7 @@ function renderFeedPicker(){
   if(!feedPickerChoices || !activeAccId) return;
   const activeAccount = CFG.accounts.find(a => a.id === activeAccId);
   $("#local-feed-add").classList.toggle("hidden", !activeAccount || activeAccount.type !== "local");
+  $("#btn-import-account-opml").classList.toggle("hidden", !activeAccount || activeAccount.type !== "local");
 
   [...feedPickerChoices.values()]
     .filter(f => f.accountId === activeAccId)
@@ -3459,9 +3454,10 @@ $("#file-import-cfg").addEventListener("change", e=>{
 });
 
 /* ---- OPML feed export/import (distinct from the whole-config JSON above) ---- */
-function buildOpml(){
+function buildOpml(accountId){
+  const feeds = CFG.selectedFeeds.filter(f => f.accountId === accountId);
   const groups = new Map();
-  CFG.selectedFeeds.forEach(f=>{
+  feeds.forEach(f=>{
     const key = f.folderName || null;
     if(!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
@@ -3482,36 +3478,30 @@ function buildOpml(){
   });
   return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n<head><title>NRP Feeds</title></head>\n<body>\n${body}</body>\n</opml>\n`;
 }
-$("#btn-export-opml").addEventListener("click", ()=>{
-  const blob = new Blob([buildOpml()], {type:"text/x-opml"});
+$("#btn-export-account-opml").addEventListener("click", ()=>{
+  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  if(!acc) return;
+  const blob = new Blob([buildOpml(acc.id)], {type:"text/x-opml"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = "nrp-feeds.opml"; a.click();
+  a.href = url; a.download = `nrp-feeds-${acc.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}.opml`; a.click();
   URL.revokeObjectURL(url);
 });
 
-// Imported feeds always land in one dedicated, idempotent local account —
-// re-importing the same or an updated OPML file won't create duplicate
-// accounts, and already-imported feed URLs are recognized rather than
-// duplicated. Deliberately does NOT fetch/validate each feed at import time
-// (an OPML file can list hundreds of feeds — that would be slow and heavy);
-// entries simply populate on the next normal sync, same as any newly added
-// feed, protected by the same per-feed timeout/size-cap/isolation already
-// in place for local feeds generally.
-function ensureImportAccount(){
-  let acc = CFG.accounts.find(a => a.id === "opml_import");
-  if(!acc){
-    acc = { id: "opml_import", type: "local", name: "Imported Feeds", url: "", maxItems: 50, localFeeds: [] };
-    CFG.accounts.push(acc);
-  }
-  acc.localFeeds = acc.localFeeds || [];
-  return acc;
-}
-function importOpml(xmlText){
+// Import is deliberately local-accounts-only (see btn-import-account-opml's
+// visibility toggle in renderFeedPicker): NRP doesn't do feed CRUD against
+// Miniflux/NewsBlur servers directly (that stays the job of their own
+// clients), so there's no "account" an imported feed could meaningfully
+// attach to for those types. Each local account imports independently,
+// straight into its own localFeeds — no shared intermediary account.
+// Deliberately does NOT fetch/validate each feed at import time (an OPML
+// file can list hundreds of feeds — that would be slow and heavy); entries
+// simply populate on the next normal sync, protected by the same per-feed
+// timeout/size-cap/isolation already in place for local feeds generally.
+function importOpml(xmlText, account){
   const doc = new DOMParser().parseFromString(xmlText, "text/xml");
   if(doc.querySelector("parsererror")) throw new Error("file could not be parsed as OPML");
-  const account = ensureImportAccount();
-  const existingUrls = new Set(account.localFeeds.map(f=>f.url));
+  account.localFeeds = account.localFeeds || [];
   let addedFeeds = 0, addedSelections = 0;
 
   const walk = (node, folderName)=>{
@@ -3523,7 +3513,6 @@ function importOpml(xmlText){
         if(!feedDef){
           feedDef = { id: genLocalFeedId(), url: xmlUrl, title: child.getAttribute("title") || child.getAttribute("text") || xmlUrl };
           account.localFeeds.push(feedDef);
-          existingUrls.add(xmlUrl);
           addedFeeds++;
         }
         const uid = account.id + "___" + feedDef.id;
@@ -3544,20 +3533,22 @@ function importOpml(xmlText){
   saveConfig(CFG);
   return {addedFeeds, addedSelections};
 }
-$("#btn-import-opml").addEventListener("click", ()=> $("#file-import-opml").click());
-$("#file-import-opml").addEventListener("change", e=>{
+$("#btn-import-account-opml").addEventListener("click", ()=> $("#file-import-account-opml").click());
+$("#file-import-account-opml").addEventListener("change", e=>{
   const file = e.target.files[0];
   e.target.value = ""; // allow re-selecting the same file consecutively
   if(!file) return;
+  const acc = CFG.accounts.find(a => a.id === $("#feed-picker-account").value);
+  if(!acc || acc.type !== "local"){ toast("Select a local account first"); return; }
   const reader = new FileReader();
   reader.onload = ev => {
     try{
-      const {addedFeeds, addedSelections} = importOpml(ev.target.result);
-      toast(`Imported ${addedFeeds} new feed${addedFeeds!==1?"s":""}, ${addedSelections} added to your list`);
-      feedPickerChoices = null;
-      $("#feed-picker").classList.add("hidden");
-      populateConfigForm();
-      renderFeedList();
+      const {addedFeeds, addedSelections} = importOpml(ev.target.result, acc);
+      toast(`Imported ${addedFeeds} new feed${addedFeeds!==1?"s":""} into "${acc.name}", ${addedSelections} added to your list`);
+      // Reflect the newly-imported feeds in the currently-open picker
+      // immediately, same as a single manually-added feed would.
+      applyFetchedFeedsToPicker(acc, localGetFeeds(acc));
+      renderFeedPicker();
     }catch(err){
       toast("Could not import OPML: " + (err && err.message));
     }
