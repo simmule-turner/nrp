@@ -80,9 +80,9 @@ try{
   fieldset{ border:1px solid var(--border); border-radius:3px; margin:1em 0; padding:.8em 1em 1.1em; }
   legend{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; padding:0 .4em; color:var(--muted); }
   legend.collapsible{ display:inline-flex; align-items:center; gap:.35em; cursor:pointer; -webkit-user-select:none; user-select:none; }
-  .collapsible-body{ margin-top:.9em; }
+  .collapsible-body{ margin-top:-15px; }
   .collapsible-body > *:first-child{ margin-top:0 !important; }
-  fieldset.section-collapsed{ padding-bottom:0; margin-bottom:12px; }
+  fieldset.section-collapsed{ padding-top:0; padding-bottom:8px; margin-bottom:12px; }
   legend.collapsible .chevron{
     display:inline-flex; align-items:center; justify-content:center;
     width:1.6em; height:1.6em; flex:0 0 auto; font-size:11px;
@@ -773,7 +773,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.62"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.64"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
