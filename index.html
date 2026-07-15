@@ -777,7 +777,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.70"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.71"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -3182,8 +3182,10 @@ function applyFetchedFeedsToPicker(acc, feeds){
     const uid = acc.id + "___" + f.id;
     const existing = feedPickerChoices.get(uid);
     const prior = selectedById.get(uid);
+    const overrideTitle = acc.feedTitleOverrides && acc.feedTitleOverrides[f.id];
     feedPickerChoices.set(uid, {
-      uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, accountType: acc.type, title: f.title,
+      uid: uid, rawId: f.id, accountId: acc.id, accountName: acc.name, accountType: acc.type,
+      title: overrideTitle || f.title,
       url: f.url || null,
       checked: existing ? existing.checked : !!prior,
       categoryTitle: f.categoryTitle || "Uncategorized",
@@ -3321,6 +3323,29 @@ function editLocalFeed(f){
   toast("Feed updated");
 }
 
+// For Miniflux/NewsBlur feeds — unlike editLocalFeed, this only renames the
+// local display title (no URL to edit, and we don't manage remote
+// subscriptions here — see the account's own client for that). Stored as a
+// persistent override on the account, separate from the cached feed
+// catalog itself, so a later refresh (which replaces cachedFeeds wholesale
+// with whatever the server reports) doesn't silently discard the rename.
+function editFeedDisplayName(f){
+  const account = CFG.accounts.find(a => a.id === f.accountId);
+  if(!account) return;
+  const newTitle = prompt("Feed name:", f.title);
+  if(newTitle === null) return;
+  const trimmed = newTitle.trim();
+  if(!trimmed) return;
+  account.feedTitleOverrides = account.feedTitleOverrides || {};
+  account.feedTitleOverrides[f.rawId] = trimmed;
+  f.title = trimmed;
+  const sel = CFG.selectedFeeds.find(s => s.id === f.uid);
+  if(sel) sel.title = trimmed;
+  saveConfig(CFG);
+  renderFeedPicker();
+  toast("Feed renamed");
+}
+
 async function deleteLocalFeed(f){
   if(!confirm(`Remove feed "${f.title}"?`)) return;
   const account = CFG.accounts.find(a => a.id === f.accountId);
@@ -3394,29 +3419,29 @@ function renderFeedPicker(){
     }
     row.appendChild(cb); row.appendChild(lab);
 
-    if(f.accountType === "local"){
-      row.style.cssText += "-webkit-touch-callout:none; -webkit-user-select:none; user-select:none;";
-      // Deliberately no visible edit/delete buttons here — those made
-      // local feed rows wider and visually different from Miniflux/
-      // NewsBlur rows. Long-press instead, same pattern already used for
-      // feed-folder headers, so every row looks identical regardless of
-      // account type; the actions are still there, just not taking up
-      // permanent row space for something used occasionally.
-      attachLongPress(row, {
-        onLongPress: ()=>{
-          if(navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
-          showPopupMenu({
-            id: "local-feed-row-menu",
-            anchorEl: row,
-            items: [
-              {label: "Edit feed", onClick: ()=>editLocalFeed(f)},
-              {label: "Delete feed", onClick: ()=>deleteLocalFeed(f)}
-            ]
-          });
-        },
-        excludeSelector: "input"
-      });
-    }
+    // Every row gets a long-press menu — local feeds can be edited (title +
+    // URL) and deleted outright; Miniflux/NewsBlur feeds can only be
+    // renamed locally (no URL to change, and we don't manage their remote
+    // subscriptions from here — see the account's own client for that).
+    // Deliberately no visible buttons for any of this: that's what used to
+    // make local rows wider and visually different from Miniflux/NewsBlur
+    // ones. Same long-press pattern already used for feed-folder headers.
+    row.style.cssText += "-webkit-touch-callout:none; -webkit-user-select:none; user-select:none;";
+    const feedMenuItems = f.accountType === "local"
+      ? [
+          {label: "Edit feed", onClick: ()=>editLocalFeed(f)},
+          {label: "Delete feed", onClick: ()=>deleteLocalFeed(f)}
+        ]
+      : [
+          {label: "Edit feed name", onClick: ()=>editFeedDisplayName(f)}
+        ];
+    attachLongPress(row, {
+      onLongPress: ()=>{
+        if(navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
+        showPopupMenu({ id: "feed-row-menu", anchorEl: row, items: feedMenuItems });
+      },
+      excludeSelector: "input"
+    });
 
     if(CFG.folderMode === "manual"){
       const sel = document.createElement("select");
