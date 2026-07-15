@@ -291,7 +291,8 @@ fieldset legend {
     <div class="pad">
 
       <fieldset>
-        <legend>Reader Accounts</legend>
+        <legend id="reader-accounts-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Reader Accounts</legend>
+        <div id="reader-accounts-body" class="collapsible-body">
         <div id="cfg-accounts-list"></div>
         <button id="btn-add-account" class="chip" style="margin-top:.4em;">+ Add Account</button>
 
@@ -409,9 +410,11 @@ fieldset legend {
             <button id="btn-cancel-account" class="grow">Cancel</button>
           </div>
         </div>
+        </div>
       </fieldset>
       <fieldset>
-        <legend>Read-it-later Accounts</legend>
+        <legend id="rl-accounts-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Read-it-later Accounts</legend>
+        <div id="rl-accounts-body" class="collapsible-body">
         <div id="cfg-rl-accounts-list"></div>
         <button id="btn-add-rl-account" class="chip" style="margin-top:.4em;">+ Add Account</button>
 
@@ -474,6 +477,7 @@ fieldset legend {
             <button id="btn-save-rl-account" class="primary grow">Save Account</button>
             <button id="btn-cancel-rl-account" class="grow">Cancel</button>
           </div>
+        </div>
         </div>
       </fieldset>
 
@@ -773,7 +777,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.65"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.66"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -2665,6 +2669,8 @@ function setupCollapsibleSection(key, legendId, bodyId){
     saveCollapsedSettings();
   });
 }
+setupCollapsibleSection("reader-accounts", "reader-accounts-legend", "reader-accounts-body");
+setupCollapsibleSection("rl-accounts", "rl-accounts-legend", "rl-accounts-body");
 setupCollapsibleSection("appearance", "appearance-legend", "appearance-body");
 setupCollapsibleSection("cache", "cache-legend", "cache-body");
 setupCollapsibleSection("logging", "logging-legend", "logging-body");
