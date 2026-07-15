@@ -379,14 +379,14 @@ fieldset legend {
           <div id="account-feed-management" class="hidden" style="margin-top:1.2em; padding-top:1em; border-top:1px solid var(--border);">
             <label style="margin-top:0;">Feeds</label>
             <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
-              <button type="button" id="btn-refresh-feed-list" class="grow" title="Refresh feed list from server" aria-label="Refresh feed list">&#x21bb; Refresh</button>
-              <button type="button" id="btn-select-all" class="grow">All</button>
-              <button type="button" id="btn-deselect-all" class="grow">None</button>
-            </div>
-            <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
               <button type="button" id="btn-export-account-opml" class="grow">Export OPML</button>
               <button type="button" id="btn-import-account-opml" class="grow hidden">Import OPML</button>
               <input type="file" id="file-import-account-opml" class="hidden" accept=".opml,.xml">
+            </div>
+            <div class="row wrap" style="margin-bottom:.6em; gap:.4em;">
+              <button type="button" id="btn-refresh-feed-list" class="grow" title="Refresh feed list from server" aria-label="Refresh feed list">Refresh</button>
+              <button type="button" id="btn-select-all" class="grow">All</button>
+              <button type="button" id="btn-deselect-all" class="grow">None</button>
             </div>
             <div id="local-feed-add" class="hidden" style="margin-bottom:.8em; padding:.6em; border:1px solid var(--border); border-radius:3px;">
               <label for="local-feed-url" style="margin-top:0;">Add feed URL</label>
@@ -777,7 +777,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.68"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.69"; // bump this manually on meaningful changes
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
