@@ -665,6 +665,25 @@ fieldset legend {
           actually arrived as it streams in, so an oversized file gets abandoned mid-download
           instead of being fetched in full and only then discarded for being too big to cache.
         </p>
+        <hr>
+        <label for="cfg-purge-days">Purge read articles after (days, -1 = never)</label>
+        <input id="cfg-purge-days" type="number" min="-1" step="1" value="30">
+        <label for="cfg-max-entries-per-feed">Max stored read articles per feed (-1 = unlimited)</label>
+        <input id="cfg-max-entries-per-feed" type="number" min="-1" step="1" value="-1">
+        <label for="cfg-stub-reap-days">Fully remove purge placeholders after (days, -1 = never)</label>
+        <input id="cfg-stub-reap-days" type="number" min="-1" step="1" value="90">
+        <p class="muted" style="font-size:11px; margin:.4em 0 0;">
+          Runs automatically as part of every sync. Only ever touches read, unstarred articles —
+          unread and starred articles are never purged, regardless of age or these limits.
+          For Miniflux/NewsBlur, purged articles are deleted outright — the server itself only
+          ever reports unread items, so a deleted one can't resurface as unread. For local feeds,
+          a small placeholder is kept instead, since there's no server-side read tracking and a
+          feed could re-list the same old item later; the setting above controls how long that
+          placeholder sticks around before being fully removed too.
+        </p>
+        <div class="row" style="margin-top:.6em;">
+          <button id="btn-purge-now" class="grow">Purge now</button>
+        </div>
         <div class="row between wrap" style="margin-top:.9em; gap:.6em;">
           <span class="muted">Cached: <span id="cache-usage" class="mono-num">&mdash;</span></span>
           <button id="btn-clear-cache">Clear all cached data</button>
@@ -776,7 +795,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.73"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.76"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -803,6 +822,7 @@ const DEFAULT_CFG = {
   fsArtTitle: 22, fwArtTitle: true,
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
+  purgeReadAfterDays:30, maxEntriesPerFeed:-1, stubReapAfterDays:90,
   maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[],
   toolbarPlacement: "top",
@@ -2696,6 +2716,9 @@ function populateConfigForm(){
   $("#cfg-max-item").value = CFG.maxItemSizeMB;
   $("#cfg-max-content-size").value = (CFG.maxContentSizeMB === undefined ? -1 : CFG.maxContentSizeMB);
   $("#cfg-max-image-size").value = (CFG.maxImageSizeMB === undefined ? 8 : CFG.maxImageSizeMB);
+  $("#cfg-purge-days").value = (CFG.purgeReadAfterDays === undefined ? 30 : CFG.purgeReadAfterDays);
+  $("#cfg-max-entries-per-feed").value = (CFG.maxEntriesPerFeed === undefined ? -1 : CFG.maxEntriesPerFeed);
+  $("#cfg-stub-reap-days").value = (CFG.stubReapAfterDays === undefined ? 90 : CFG.stubReapAfterDays);
 
   $("#cfg-fw-feed").checked = CFG.fwFeed;
   $("#cfg-fw-art-list-title").checked = CFG.fwArtListTitle;
@@ -3475,6 +3498,31 @@ $("#btn-clear-cache").addEventListener("click", async ()=>{
   toast("All cached data cleared");
   updateCacheUsageDisplay();
 });
+$("#btn-purge-now").addEventListener("click", async ()=>{
+  toast("Purging\u2026");
+  startBgTask();
+  try{
+    let total = 0;
+    for(const f of CFG.selectedFeeds){
+      try{ total += await purgeFeedEntries(f); }
+      catch(e){ debug(`Manual purge failed for feed=${f.id}: ${e && e.message}`); }
+    }
+    let reaped = 0;
+    try{ reaped = await reapOldStubs(); }
+    catch(e){ debug(`Manual reap failed: ${e && e.message}`); }
+    if(total > 0 || reaped > 0){
+      await gcOrphanImages().catch(()=>{});
+      if(currentScreen === "screen-articles") renderArticleList();
+    }
+    const parts = [];
+    if(total > 0) parts.push(`${total} article${total!==1?"s":""} purged`);
+    if(reaped > 0) parts.push(`${reaped} old stub${reaped!==1?"s":""} removed`);
+    toast(parts.length ? parts.join(", ") : "Nothing to purge");
+    updateCacheUsageDisplay();
+  } finally {
+    endBgTask();
+  }
+});
 $("#btn-clear-outbox").addEventListener("click", async ()=>{
   if(!confirm("Clear all pending sync actions? Your local read/unread/starred state stays as-is — this only stops trying to push it to the server.")) return;
   await tx("outbox","readwrite", store=>store.clear());
@@ -3726,6 +3774,12 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   if(isNaN(CFG.maxContentSizeMB)) CFG.maxContentSizeMB = -1;
   CFG.maxImageSizeMB = parseFloat($("#cfg-max-image-size").value);
   if(isNaN(CFG.maxImageSizeMB)) CFG.maxImageSizeMB = 8;
+  CFG.purgeReadAfterDays = parseInt($("#cfg-purge-days").value, 10);
+  if(isNaN(CFG.purgeReadAfterDays)) CFG.purgeReadAfterDays = 30;
+  CFG.maxEntriesPerFeed = parseInt($("#cfg-max-entries-per-feed").value, 10);
+  if(isNaN(CFG.maxEntriesPerFeed)) CFG.maxEntriesPerFeed = -1;
+  CFG.stubReapAfterDays = parseInt($("#cfg-stub-reap-days").value, 10);
+  if(isNaN(CFG.stubReapAfterDays)) CFG.stubReapAfterDays = 90;
   CFG.startupMode = $("#cfg-startup-mode").value;
   CFG.folderMode = $("#cfg-folder-mode").value;
   CFG.toolbarPlacement = $("#cfg-toolbar-placement").value;
@@ -3735,6 +3789,102 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   toast("Configuration saved");
   goToFeedList();
 });
+
+// Replaces a read, non-starred entry with a minimal stub — same id/rawId/
+// feedId (so sync dedup still recognizes it as "already known" and never
+// re-fetches it as new/unread) but with the actual content dropped, which
+// is where the real storage cost is. Never called on unread or starred
+// entries; those are never purged.
+async function purgeEntryToStub(entry){
+  const stub = {
+    id: entry.id, rawId: entry.rawId, feedId: entry.feedId, rawFeedId: entry.rawFeedId,
+    accountId: entry.accountId, status: entry.status, starred: false,
+    publishedAt: entry.publishedAt, feedTitle: entry.feedTitle,
+    title: entry.title, // kept — negligible size, useful for logs/debugging
+    content: "", contentSize: 0, url: null, enclosureUrl: null,
+    purged: true, purgedAt: Date.now()
+  };
+  return tx("entries","readwrite", store=>store.put(stub));
+}
+
+// Stubs from local accounts still need to protect against a raw feed
+// re-listing an old item at some arbitrary point in the future (see
+// purgeFeedEntries below), but "forever" is overkill — after this long
+// with no such re-appearance, a stub is fully deleted rather than kept
+// indefinitely. Miniflux/NewsBlur entries never even become stubs in the
+// first place (see purgeFeedEntries), so this only ever matters for local
+// accounts in practice. Configurable via CFG.stubReapAfterDays (-1 = never).
+async function reapOldStubs(){
+  const days = CFG.stubReapAfterDays;
+  if(days === undefined || days === null || days < 0) return 0;
+  const all = await idbGetAll("entries");
+  const cutoff = Date.now() - days*24*60*60*1000;
+  const toDelete = all.filter(e => e.purged && e.purgedAt && e.purgedAt < cutoff).map(e=>e.id);
+  if(toDelete.length === 0) return 0;
+  await deleteEntries(toDelete);
+  return toDelete.length;
+}
+// Reaping is a full table scan (no index on `purged`/`purgedAt`), so it's
+// throttled to at most once/day rather than run on every single sync —
+// the manual "Purge now" button bypasses this and calls reapOldStubs()
+// directly, since an explicit user action should always take immediate
+// effect.
+const STUB_REAP_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const STUB_REAP_LAST_KEY = "nrp_last_stub_reap";
+async function reapOldStubsThrottled(){
+  try{
+    const last = parseInt(localStorage.getItem(STUB_REAP_LAST_KEY) || "0", 10);
+    if(Date.now() - last < STUB_REAP_CHECK_INTERVAL_MS) return 0;
+    localStorage.setItem(STUB_REAP_LAST_KEY, String(Date.now()));
+  }catch(e){}
+  return reapOldStubs();
+}
+
+// Applies both purge rules (age + per-feed count cap) to one feed's read,
+// non-starred, not-already-purged entries. Either rule can be disabled
+// independently (-1). Returns how many entries were purged, so the caller
+// can decide whether an orphan-image GC pass is worth running afterward.
+async function purgeFeedEntries(feedObj){
+  const purgeAfterDays = CFG.purgeReadAfterDays;
+  const maxPerFeed = CFG.maxEntriesPerFeed;
+  const ageEnabled = purgeAfterDays !== undefined && purgeAfterDays !== null && purgeAfterDays >= 0;
+  const capEnabled = maxPerFeed !== undefined && maxPerFeed !== null && maxPerFeed >= 0;
+  if(!ageEnabled && !capEnabled) return 0;
+
+  const entries = await getEntriesByFeed(feedObj.id);
+  const candidates = entries.filter(e => e.status === "read" && !e.starred && !e.purged);
+  if(candidates.length === 0) return 0;
+
+  const toPurge = new Map();
+  if(ageEnabled){
+    const cutoff = Date.now() - purgeAfterDays*24*60*60*1000;
+    candidates.forEach(e=>{
+      const t = new Date(e.publishedAt).getTime();
+      if(!isNaN(t) && t < cutoff) toPurge.set(e.id, e);
+    });
+  }
+  if(capEnabled && candidates.length > maxPerFeed){
+    candidates.slice().sort((a,b)=> new Date(b.publishedAt) - new Date(a.publishedAt))
+      .slice(maxPerFeed).forEach(e=> toPurge.set(e.id, e));
+  }
+  if(toPurge.size === 0) return 0;
+
+  // Miniflux/NewsBlur sync only ever requests unread items from the server
+  // (status=unread) — a fully-deleted, already-read entry can never come
+  // back as "new" on a future sync regardless of whether NRP remembers it
+  // locally, since the server itself already filters by read status. The
+  // stub's dedup protection is therefore only actually needed for local
+  // accounts, which have no server-side read tracking of their own — an
+  // unrecognized account defaults to the safer (stub) path.
+  const account = CFG.accounts.find(a => a.id === feedObj.accountId);
+  const needsStub = !account || account.type === "local";
+  if(needsStub){
+    for(const entry of toPurge.values()){ await purgeEntryToStub(entry); }
+  }else{
+    await deleteEntries([...toPurge.keys()]);
+  }
+  return toPurge.size;
+}
 
 async function removeFeed(feedUid){
   const entries = await getEntriesByFeed(feedUid);
@@ -3812,6 +3962,7 @@ const mediaSyncLimiter = createLimiter(SYNC_CONCURRENCY);
 // caller's "Refreshing..." indicator stuck forever.
 async function syncFeedList(feedList, onFeedDone){
   await processOutbox();
+  let anyPurged = false;
   await Promise.all(feedList.map(f => feedSyncLimiter(async ()=>{
     let entries = [];
     try{
@@ -3824,11 +3975,24 @@ async function syncFeedList(feedList, onFeedDone){
     }catch(e){
       debug(`refreshCounterForFeed failed for feed=${f.id}: ${e && e.message}`);
     }
+    try{
+      const purgedCount = await purgeFeedEntries(f);
+      if(purgedCount > 0){
+        anyPurged = true;
+        debug(`Purged ${purgedCount} read entr${purgedCount===1?"y":"ies"} for feed="${f.title}"`);
+      }
+    }catch(e){
+      debug(`purgeFeedEntries failed for feed=${f.id}: ${e && e.message}`);
+    }
     if(onFeedDone) onFeedDone(f);
     if(entries.length){
       mediaSyncLimiter(()=>prefetchFeedMedia(entries)).catch(()=>{});
     }
   })));
+  if(anyPurged) gcOrphanImages().catch(()=>{});
+  reapOldStubsThrottled()
+    .then(n=>{ if(n>0) debug(`Reaped ${n} old purge stub${n===1?"":"s"}`); })
+    .catch(e=>debug(`reapOldStubsThrottled failed: ${e && e.message}`));
 }
 async function syncAllFeeds(onFeedDone){
   return syncFeedList(CFG.selectedFeeds, onFeedDone);
@@ -4049,6 +4213,7 @@ async function getCurrentListEntries(){
 
 async function getFilteredListEntries(){
   let entries = await getCurrentListEntries();
+  entries = entries.filter(e=>!e.purged);
   if(articleFilter==="unread") entries = entries.filter(e=>e.status==="unread");
   else if(articleFilter==="read") entries = entries.filter(e=>e.status==="read");
   else if(articleFilter==="starred") entries = entries.filter(e=>e.starred);
@@ -4276,6 +4441,7 @@ async function openArticle(entryId, opts){
   opts = opts || {};
   const entry = await getEntry(entryId);
   if(!entry) return;
+  if(entry.purged){ toast("This article was purged to save space"); return; }
   currentEntry = entry;
   saveLastArticleView(entry);
   
