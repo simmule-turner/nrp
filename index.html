@@ -33,7 +33,6 @@ try{
     --danger:#B0402E;
     --fs-base:16px;
     --font-ui:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
-    --font-read:Georgia,'Iowan Old Style','Palatino Linotype',serif;
 
     /* Configurable Typography Defaults */
     --fs-feed: 14px; --fw-feed: 400;
@@ -777,7 +776,15 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.71"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.73"; // bump this manually on meaningful changes
+// Every entry, feed, and picker-choice id in the app is this same composite
+// key: an account id, a fixed separator, and that account's own raw id for
+// the thing. Was previously built as a raw string concatenation independently
+// in ~10 places — a shared builder means the separator only exists in one
+// place, so a typo in any one call site can't silently break uid matching
+// for just that one entry type.
+function makeUid(accountId, rawId){ return accountId + "___" + rawId; }
+
 const CFG_KEY = "nrp_config";
 const DEFAULT_CFG = {
   accounts: [],
@@ -788,7 +795,7 @@ const DEFAULT_CFG = {
   darkBg:"#15171A", darkFg:"#E7E4DA",
   accentColor:"#B8752E",
   startupMode:"feedlist",
-  density:"small", previewLines:3, fontSize:16,
+  density:"small", previewLines:3,
   neverFetchImages:false,
   fsFeed: 14, fwFeed: false,
   fsArtListTitle: 15, fwArtListTitle: true,
@@ -797,7 +804,7 @@ const DEFAULT_CFG = {
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   maxContentSizeMB:-1, maxImageSizeMB:8,
-  folderMode:"none", folders:[], hideEmptyFeeds:false,
+  folderMode:"none", folders:[],
   toolbarPlacement: "top",
   ffFeed: "georgia",
   ffArtListTitle: "georgia",
@@ -834,7 +841,7 @@ function loadConfig(){
         parsed.selectedFeeds.forEach(f => {
           f.accountId = accId;
           f.rawId = f.id;
-          f.id = accId + "___" + f.id;
+          f.id = makeUid(accId, f.id);
         });
       }
       delete parsed.minifluxUrl; delete parsed.minifluxToken; delete parsed.minifluxMaxItems;
@@ -1150,10 +1157,6 @@ function revokeObjectUrlFor(url){
   }
 }
 
-async function cacheUsageBytes(){
-  const all = await idbGetAll("assets");
-  return all.reduce((sum,a)=>sum+(a.size||0), 0);
-}
 async function evictLru(neededBytes){
   let all = await idbGetAll("assets");
   all = all.filter(a=>!a.protectedFlag).sort((a,b)=>a.lastAccessed-b.lastAccessed);
@@ -1732,9 +1735,9 @@ async function mfGetUnreadEntries(account, feedId, knownRawIds){
   }
   newEntries = newEntries.slice(0, maxNeeded);
   return newEntries.map(e => ({
-    id: account.id + "___" + e.id,
+    id: makeUid(account.id, e.id),
     rawId: String(e.id),
-    feedId: account.id + "___" + e.feed_id,
+    feedId: makeUid(account.id, e.feed_id),
     rawFeedId: String(e.feed_id),
     accountId: account.id,
     title: e.title, url: e.url, content: e.content,
@@ -1949,9 +1952,9 @@ async function nbGetUnreadEntries(account, feedId, knownRawIds, contentMode){
     }
 
     return stories.map(s => ({
-        id: account.id + "___" + s.story_hash,
+        id: makeUid(account.id, s.story_hash),
         rawId: s.story_hash,
-        feedId: account.id + "___" + feedId,
+        feedId: makeUid(account.id, feedId),
         rawFeedId: String(feedId),
         accountId: account.id,
         title: s.story_title,
@@ -2152,9 +2155,9 @@ async function localGetUnreadEntries(account, rawFeedId, knownRawIds){
 
   const freshItems = parsed.items.filter(it => !knownRawIds.has(it.rawId)).slice(0, maxNeeded);
   return freshItems.map(it => ({
-    id: account.id + "___" + it.rawId,
+    id: makeUid(account.id, it.rawId),
     rawId: it.rawId,
-    feedId: account.id + "___" + rawFeedId,
+    feedId: makeUid(account.id, rawFeedId),
     rawFeedId: rawFeedId,
     accountId: account.id,
     title: it.title,
@@ -3179,7 +3182,7 @@ let feedPickerChoices = null;
 function applyFetchedFeedsToPicker(acc, feeds){
   const selectedById = new Map(CFG.selectedFeeds.map(f=>[f.id, f]));
   feeds.forEach(f => {
-    const uid = acc.id + "___" + f.id;
+    const uid = makeUid(acc.id, f.id);
     const existing = feedPickerChoices.get(uid);
     const prior = selectedById.get(uid);
     const overrideTitle = acc.feedTitleOverrides && acc.feedTitleOverrides[f.id];
@@ -3284,7 +3287,7 @@ async function addLocalFeedToAccount(account){
     $("#local-feed-url").value = "";
     toast(`Added "${feedDef.title}"`);
     if(feedPickerChoices){
-      const uid = account.id + "___" + feedDef.id;
+      const uid = makeUid(account.id, feedDef.id);
       feedPickerChoices.set(uid, {
         uid, rawId: feedDef.id, accountId: account.id, accountName: account.name, accountType: "local",
         url: feedDef.url, title: feedDef.title, checked: true, categoryTitle: "Uncategorized",
@@ -3648,7 +3651,7 @@ function importOpml(xmlText, account){
           account.localFeeds.push(feedDef);
           addedFeeds++;
         }
-        const uid = account.id + "___" + feedDef.id;
+        const uid = makeUid(account.id, feedDef.id);
         if(!CFG.selectedFeeds.some(s=>s.id===uid)){
           CFG.selectedFeeds.push({
             id: uid, rawId: feedDef.id, accountId: account.id, title: feedDef.title, url: feedDef.url,
