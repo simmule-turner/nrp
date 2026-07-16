@@ -817,7 +817,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.77"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.78"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -1170,11 +1170,43 @@ function openDb(){
         db.createObjectStore("thumbnails", {keyPath:"id"});
       }
     };
-    req.onsuccess = ()=>resolve(req.result);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      // If another tab needs to upgrade the schema (a future DB_VERSION
+      // bump), it can't proceed while this tab still holds an open
+      // connection — its indexedDB.open() would just hang waiting. Closing
+      // here lets that upgrade go through instead of blocking it
+      // indefinitely; this tab becomes unusable until reloaded, which is
+      // surfaced clearly rather than left to fail confusingly on whatever
+      // IDB operation happens to run next.
+      db.onversionchange = ()=>{
+        db.close();
+        dbp = null;
+        toast("NRP was updated in another tab \u2014 reload this tab to continue");
+      };
+      resolve(db);
+    };
     req.onerror = ()=>reject(req.error);
   });
   return dbp;
 }
+// A write failing because storage is genuinely full is a different, more
+// actionable situation than a generic transaction error — the existing
+// error path (reject + whatever try/catch the caller already has) still
+// runs unchanged either way; this only adds a clear, one-time-per-session
+// notification on top; it never changes what the caller sees.
+let quotaWarningShown = false;
+function isQuotaExceededError(err){
+  return !!err && (err.name === "QuotaExceededError" || err.code === 22 || /quota/i.test(err.message||""));
+}
+function handlePossibleQuotaError(err){
+  if(!isQuotaExceededError(err)) return;
+  debug(`Storage quota exceeded: ${err && err.message}`);
+  if(quotaWarningShown) return;
+  quotaWarningShown = true;
+  toast("Storage is full \u2014 new data can't be saved. Free up space in Settings \u2192 Cache (Purge now / Clear all cached data).");
+}
+
 async function tx(storeName, mode, fn){
   const db = await openDb();
   return new Promise((resolve, reject)=>{
@@ -1183,8 +1215,8 @@ async function tx(storeName, mode, fn){
     let result;
     Promise.resolve(fn(store)).then(r=>{ result = r; }).catch(reject);
     t.oncomplete = ()=>resolve(result);
-    t.onerror = ()=>reject(t.error);
-    t.onabort = ()=>reject(t.error);
+    t.onerror = ()=>{ handlePossibleQuotaError(t.error); reject(t.error); };
+    t.onabort = ()=>{ handlePossibleQuotaError(t.error); reject(t.error); };
   });
 }
 function reqp(req){
@@ -1211,6 +1243,26 @@ async function getEntry(id){ return tx("entries","readonly", store=>reqp(store.g
 // race where two independent in-memory copies of the same entry each do a full
 // overwrite — whichever write lands second silently erases whatever field the
 // other one had just added.
+// Lightweight cross-tab coordination — deliberately NOT full conflict
+// resolution (still last-write-wins under the hood for genuinely
+// concurrent edits to the same entry from two tabs at once), just a signal
+// so other open tabs refresh their currently-visible list instead of
+// silently showing stale unread counts/read status for the rest of the
+// session. Same-origin only, feature-detected — degrades to "no cross-tab
+// refresh" rather than breaking anything on a browser without it.
+const dataChannel = (typeof BroadcastChannel !== "undefined") ? new BroadcastChannel("nrp-data-changed") : null;
+function announceDataChanged(){
+  if(dataChannel) try{ dataChannel.postMessage({t: Date.now()}); }catch(e){}
+}
+if(dataChannel){
+  dataChannel.onmessage = ()=>{
+    // Only re-renders from local IndexedDB (cheap) — a message from
+    // another tab never triggers a network sync in this tab.
+    if(currentScreen === "screen-feeds") refreshCounters().then(renderFeedList);
+    else if(currentScreen === "screen-articles") renderArticleList();
+  };
+}
+
 async function patchEntry(id, patchFn){
   return tx("entries", "readwrite", store=>{
     return new Promise((resolve, reject)=>{
@@ -1224,7 +1276,7 @@ async function patchEntry(id, patchFn){
       };
       req.onerror = ()=>reject(req.error);
     });
-  });
+  }).then(rec=>{ announceDataChanged(); return rec; });
 }
 async function getEntriesByFeed(feedId){ return idbGetAll("entries","by_feed", feedId); }
 async function deleteEntries(ids){
@@ -3745,6 +3797,7 @@ function renderFeedPicker(){
 
 $("#btn-clear-cache").addEventListener("click", async ()=>{
   await clearAllCachedData();
+  quotaWarningShown = false;
   toast("All cached data cleared");
   updateCacheUsageDisplay();
 });
@@ -3763,6 +3816,8 @@ $("#btn-purge-now").addEventListener("click", async ()=>{
     if(total > 0 || reaped > 0){
       await gcOrphanImages().catch(()=>{});
       if(currentScreen === "screen-articles") renderArticleList();
+      quotaWarningShown = false;
+      announceDataChanged();
     }
     const parts = [];
     if(total > 0) parts.push(`${total} article${total!==1?"s":""} purged`);
@@ -4254,6 +4309,7 @@ async function syncFeedList(feedList, onFeedDone){
   reapOldStubsThrottled()
     .then(n=>{ if(n>0) debug(`Reaped ${n} old purge stub${n===1?"":"s"}`); })
     .catch(e=>debug(`reapOldStubsThrottled failed: ${e && e.message}`));
+  announceDataChanged();
 }
 async function syncAllFeeds(onFeedDone){
   return syncFeedList(CFG.selectedFeeds, onFeedDone);
@@ -4595,6 +4651,71 @@ $("#art-sort-dir").addEventListener("click", ()=>{
   renderArticleList();
 });
 
+// Rendered in batches rather than building every row (and eagerly queuing a
+// thumbnail fetch for every one of them) up front — a list of thousands of
+// articles would otherwise mean thousands of DOM nodes and background
+// image fetches for rows nowhere near the visible viewport. A sentinel
+// element at the current end of the rendered rows, observed via
+// IntersectionObserver, triggers the next batch as the user actually
+// scrolls toward it, rather than all at once on open.
+const ARTICLE_BATCH_SIZE = 50;
+let articleListEntries = []; // full filtered+sorted list for the current render, independent of how many rows are actually in the DOM
+let articleListRenderedCount = 0;
+let articleListObserver = null;
+
+function renderArticleRow(e){
+  const row = document.createElement("div");
+  row.className = "art-row" + (e.status==="read" ? " read" : "");
+  const previewText = stripTags(e.content).slice(0, 220);
+  const linesCss = Math.max(1, CFG.previewLines-1);
+  let thumbHtml = "";
+  if(CFG.density !== "text" && !CFG.neverFetchImages){
+    const imgUrl = e.enclosureUrl || firstImageUrl(e.content);
+    if(imgUrl) thumbHtml = `<img class="thumb${CFG.density==='large'?' large':''}" data-src="${escapeAttr(imgUrl)}">`;
+  }
+  row.innerHTML = `
+    ${thumbHtml}
+    <div class="body">
+      <div class="title">${e.starred?'<span class="star-dot">❤️</span>':''}${escapeHtml(e.title)}</div>
+      <div class="preview" style="-webkit-line-clamp:${linesCss};">${escapeHtml(previewText)}</div>
+      <div class="meta">${formatDate(e.publishedAt)} &middot; ${(e.contentSize/1024).toFixed(0)} KB</div>
+    </div>`;
+  row.addEventListener("click", ()=>openArticle(e.id));
+  const img = row.querySelector("img.thumb");
+  if(img){
+    getThumbFromDb(e.id).then(existing=>{
+      if(existing){
+        img.src = existing;
+      }else{
+        thumbLimiter(()=>ensureThumbnail(e)).then(src=>{
+          if(src){
+            img.src = src;
+          }else{
+            const fallback = e.enclosureUrl || firstImageUrl(e.content);
+            if(fallback) img.src = fallback;
+          }
+        });
+      }
+    });
+  }
+  return row;
+}
+
+function renderNextArticleBatch(){
+  const container = $("#article-list");
+  const sentinel = $("#article-list-sentinel");
+  const nextSlice = articleListEntries.slice(articleListRenderedCount, articleListRenderedCount + ARTICLE_BATCH_SIZE);
+  const frag = document.createDocumentFragment();
+  nextSlice.forEach(e=>frag.appendChild(renderArticleRow(e)));
+  if(sentinel) container.insertBefore(frag, sentinel);
+  else container.appendChild(frag);
+  articleListRenderedCount += nextSlice.length;
+  if(sentinel && articleListRenderedCount >= articleListEntries.length){
+    sentinel.remove();
+    if(articleListObserver){ articleListObserver.disconnect(); articleListObserver = null; }
+  }
+}
+
 async function renderArticleList(){
   let entries = await getFilteredListEntries();
   entries.sort((a,b)=>{
@@ -4605,47 +4726,28 @@ async function renderArticleList(){
   });
   lastArticleOrder = entries.map(e=>e.id);
   updateBulkMarkButton();
+
+  if(articleListObserver){ articleListObserver.disconnect(); articleListObserver = null; }
+  articleListEntries = entries;
+  articleListRenderedCount = 0;
+
   const container = $("#article-list"); container.innerHTML = "";
   if(entries.length===0){
     container.innerHTML = '<div class="empty"><div class="big">Nothing here</div>Pull to refresh on the feed list to fetch new items.</div>';
     return;
   }
-  for(const e of entries){
-    const row = document.createElement("div");
-    row.className = "art-row" + (e.status==="read" ? " read" : "");
-    const previewText = stripTags(e.content).slice(0, 220);
-    const linesCss = Math.max(1, CFG.previewLines-1);
-    let thumbHtml = "";
-    if(CFG.density !== "text" && !CFG.neverFetchImages){
-      const imgUrl = e.enclosureUrl || firstImageUrl(e.content);
-      if(imgUrl) thumbHtml = `<img class="thumb${CFG.density==='large'?' large':''}" data-src="${escapeAttr(imgUrl)}">`;
-    }
-    row.innerHTML = `
-      ${thumbHtml}
-      <div class="body">
-        <div class="title">${e.starred?'<span class="star-dot">❤️</span>':''}${escapeHtml(e.title)}</div>
-        <div class="preview" style="-webkit-line-clamp:${linesCss};">${escapeHtml(previewText)}</div>
-        <div class="meta">${formatDate(e.publishedAt)} &middot; ${(e.contentSize/1024).toFixed(0)} KB</div>
-      </div>`;
-    row.addEventListener("click", ()=>openArticle(e.id));
-    container.appendChild(row);
-    const img = row.querySelector("img.thumb");
-    if(img){
-      getThumbFromDb(e.id).then(existing=>{
-        if(existing){
-          img.src = existing;
-        }else{
-          thumbLimiter(()=>ensureThumbnail(e)).then(src=>{
-            if(src){
-              img.src = src;
-            }else{
-              const fallback = e.enclosureUrl || firstImageUrl(e.content);
-              if(fallback) img.src = fallback;
-            }
-          });
-        }
-      });
-    }
+
+  if(entries.length > ARTICLE_BATCH_SIZE){
+    const sentinel = document.createElement("div");
+    sentinel.id = "article-list-sentinel";
+    container.appendChild(sentinel);
+    renderNextArticleBatch();
+    articleListObserver = new IntersectionObserver((observerEntries)=>{
+      if(observerEntries.some(en=>en.isIntersecting)) renderNextArticleBatch();
+    }, {root: $("#screen-articles"), rootMargin: "600px"});
+    articleListObserver.observe(sentinel);
+  }else{
+    renderNextArticleBatch();
   }
 }
 // Simple concurrency-limited runner, used to cap how many thumbnail fetches
