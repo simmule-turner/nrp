@@ -715,6 +715,28 @@ fieldset legend {
       </fieldset>
 
       <fieldset>
+        <legend id="security-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Security</legend>
+        <div id="security-body" class="collapsible-body">
+        <div class="row between">
+          <label style="margin:0;">Encrypt stored credentials</label>
+          <input id="cfg-encrypt-credentials" type="checkbox">
+        </div>
+        <p class="muted" style="font-size:11px; margin:.4em 0 0;">
+          Encrypts Miniflux API tokens and Wallabag/Readeck credentials with a passphrase you set.
+          Protects against casual exposure — e.g. someone reading an exported config file or
+          browser storage directly — but not against a compromised device, where JavaScript could
+          read the passphrase as you type it. Proxy header values (custom auth headers, if you use
+          them) aren't covered by this. Off by default. If you forget this passphrase, encrypted
+          credentials can't be recovered — you'd need to re-enter them for each account.
+        </p>
+        <div class="row wrap" style="margin-top:.8em; gap:.4em;">
+          <button type="button" id="btn-change-passphrase" class="grow hidden">Change passphrase</button>
+          <button type="button" id="btn-unlock-now" class="grow hidden">Unlock now</button>
+        </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend id="logging-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Logging</legend>
         <div id="logging-body" class="collapsible-body">
         <p class="muted" style="font-size:11px; margin:0 0 .6em;">
@@ -795,7 +817,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.76"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.77"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -823,6 +845,7 @@ const DEFAULT_CFG = {
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   purgeReadAfterDays:30, maxEntriesPerFeed:-1, stubReapAfterDays:90,
+  credentialsEncrypted:false, credentialSalt:null,
   maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[],
   toolbarPlacement: "top",
@@ -833,6 +856,79 @@ const DEFAULT_CFG = {
   ffArtBody: "georgia",
   selectedFeeds:[] // [{id: accountId___feedId, accountId, title, folderName}]
 };
+
+/* ============================= CREDENTIAL ENCRYPTION (opt-in) ============================= */
+// Encrypts only the specific fields that actually hold secrets — not the
+// whole config blob. Everything else (names, URLs, preferences, folder
+// structure) stays plaintext. Encrypting the whole blob would mean every
+// single read anywhere in the app needs to go through an async decrypt,
+// which this app's synchronous "CFG is just an object in memory" design
+// doesn't support without a much larger rewrite than this feature warrants.
+// NOT currently covered: proxy header values (custom auth headers some
+// users configure manually) — a known, documented gap, not an oversight.
+//
+// The live, in-memory CFG object always holds plaintext for these fields
+// during a session, exactly as it did before this feature existed — every
+// existing call site that reads account.token/.password/.apiToken/etc.
+// needs zero changes. Encryption only happens at the localStorage read/
+// write boundary: saveConfig() encrypts on the way out, unlockCredentials()
+// (called early in init()) decrypts in place on the way in.
+const CRED_FIELDS = {
+  miniflux: ["token"],
+  wallabag: ["clientSecret", "password"],
+  readeck: ["apiToken"]
+};
+const PBKDF2_ITERATIONS = 100000;
+let credentialKey = null; // derived AES-GCM CryptoKey, cached in memory for the session once unlocked
+
+function bytesToBase64(bytes){ return btoa(String.fromCharCode(...bytes)); }
+function base64ToBytes(b64){ return Uint8Array.from(atob(b64), c=>c.charCodeAt(0)); }
+
+async function deriveKeyFromPassphrase(passphrase, saltB64){
+  const salt = saltB64 ? base64ToBytes(saltB64) : crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), {name:"PBKDF2"}, false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey(
+    {name:"PBKDF2", salt, iterations:PBKDF2_ITERATIONS, hash:"SHA-256"},
+    keyMaterial, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]
+  );
+  return {key, saltB64: saltB64 || bytesToBase64(salt)};
+}
+async function encryptString(key, plaintext){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, new TextEncoder().encode(plaintext));
+  return {__enc:true, iv:bytesToBase64(iv), data:bytesToBase64(new Uint8Array(ciphertext))};
+}
+async function decryptString(key, blob){
+  // AES-GCM is authenticated — a wrong key throws here rather than silently
+  // producing wrong plaintext, which is what lets unlockCredentials() below
+  // actually detect an incorrect passphrase instead of just guessing.
+  const plainBuf = await crypto.subtle.decrypt(
+    {name:"AES-GCM", iv:base64ToBytes(blob.iv)}, key, base64ToBytes(blob.data)
+  );
+  return new TextDecoder().decode(plainBuf);
+}
+function isEncryptedBlob(v){ return v && typeof v === "object" && v.__enc === true; }
+
+async function encryptAccountCredentials(account, key){
+  const fields = CRED_FIELDS[account.type];
+  if(!fields) return account;
+  const clone = Object.assign({}, account);
+  for(const f of fields){
+    if(clone[f] && typeof clone[f] === "string") clone[f] = await encryptString(key, clone[f]);
+  }
+  return clone;
+}
+async function decryptAccountCredentials(account, key){
+  const fields = CRED_FIELDS[account.type];
+  if(!fields) return account;
+  for(const f of fields){
+    if(isEncryptedBlob(account[f])){
+      try{ account[f] = await decryptString(key, account[f]); }
+      catch(e){ debug(`Failed to decrypt ${f} for account "${account.name}": ${e && e.message}`); }
+    }
+  }
+  return account;
+}
 
 function loadConfig(){
   try{
@@ -901,7 +997,29 @@ function loadConfig(){
     return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
 }
-function saveConfig(cfg){ localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
+let saveConfigQueue = Promise.resolve();
+function saveConfig(cfg){
+  if(cfg.credentialsEncrypted && credentialKey){
+    // Serialized rather than independently fire-and-forget: without this,
+    // two saveConfig() calls in quick succession could have their async
+    // encryption passes finish in the wrong order, and the slower (older)
+    // one would overwrite the faster (newer) one's already-written data.
+    const key = credentialKey;
+    saveConfigQueue = saveConfigQueue.then(async ()=>{
+      try{
+        const clone = Object.assign({}, cfg);
+        clone.accounts = await Promise.all((cfg.accounts||[]).map(a=>encryptAccountCredentials(a, key)));
+        clone.readItLaterAccounts = await Promise.all((cfg.readItLaterAccounts||[]).map(a=>encryptAccountCredentials(a, key)));
+        localStorage.setItem(CFG_KEY, JSON.stringify(clone));
+      }catch(e){
+        debug(`Encrypted saveConfig failed: ${e && e.message}`);
+      }
+    });
+  }else{
+    localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    saveConfigQueue = Promise.resolve();
+  }
+}
 let CFG = loadConfig();
 
 function getActiveColors() {
@@ -2455,7 +2573,11 @@ async function rdSaveUrlOnly(account, title, url){
 /* ============================= HTML SANITIZE ============================= */
 function sanitizeHtml(html){
   const doc = new DOMParser().parseFromString(html||"", "text/html");
-  doc.querySelectorAll("script,style,iframe,object,embed,form").forEach(n=>n.remove());
+  // meta/base/link removed alongside the original script/style/iframe/object/
+  // embed/form list — <base href> in particular is a real risk distinct from
+  // script injection: it can hijack how every *other* relative URL on the
+  // whole page resolves, not just within this injected content.
+  doc.querySelectorAll("script,style,iframe,object,embed,form,meta,base,link").forEach(n=>n.remove());
   ["colgroup","col"].forEach(tag=>{ doc.querySelectorAll(tag).forEach(el=>el.remove()); });
   ["table","thead","tbody","tfoot","tr","td","th"].forEach(tag=>{
     doc.querySelectorAll(tag).forEach(el=>{
@@ -2474,11 +2596,20 @@ function sanitizeHtml(html){
       parent.removeChild(a);
     }
   });
+  // Broadened from just javascript: on href/src: data:text/html and
+  // vbscript: are both real-world script-execution vectors too, and
+  // formaction/background/poster/action/xlink:href are all URL-bearing
+  // attributes a stray or malformed element could carry even though the
+  // elements that normally need them (form, video poster context, etc.)
+  // are already stripped above — defense in depth rather than relying
+  // solely on the element removal catching every path to the same attribute.
+  const urlAttrs = new Set(["href","src","xlink:href","formaction","action","background","poster"]);
+  const dangerousScheme = /^\s*(javascript|data:text\/html|vbscript):/i;
   doc.querySelectorAll("*").forEach(el=>{
     [...el.attributes].forEach(attr=>{
       const name = attr.name.toLowerCase();
       if(name.startsWith("on")) el.removeAttribute(attr.name);
-      if((name==="href"||name==="src") && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
+      if(urlAttrs.has(name) && dangerousScheme.test(attr.value)) el.removeAttribute(attr.name);
       if(name==="style" || name==="align" || name==="valign") el.removeAttribute(attr.name);
     });
   });
@@ -2693,15 +2824,125 @@ function setupCollapsibleSection(key, legendId, bodyId){
   });
 }
 setupCollapsibleSection("reader-accounts", "reader-accounts-legend", "reader-accounts-body");
+setupCollapsibleSection("security", "security-legend", "security-body");
 setupCollapsibleSection("rl-accounts", "rl-accounts-legend", "rl-accounts-body");
 setupCollapsibleSection("appearance", "appearance-legend", "appearance-body");
 setupCollapsibleSection("cache", "cache-legend", "cache-body");
 setupCollapsibleSection("logging", "logging-legend", "logging-body");
 setupCollapsibleSection("exportimport", "exportimport-legend", "exportimport-body");
 
+// Called early in init(), before anything that needs real account
+// credentials (sync, API calls) runs. If encryption is on, prompts for the
+// passphrase (up to 3 attempts) and decrypts every account's credential
+// fields in place on the live CFG object — every other part of the app
+// keeps reading account.token/.password/etc. exactly as it always has,
+// with zero awareness this happened. Returns false (locked) if the user
+// cancels or fails all attempts; accounts needing those credentials just
+// won't be able to sync until unlocked from Settings.
+async function unlockCredentials(){
+  if(!CFG.credentialsEncrypted) return true;
+  const allAccounts = [...(CFG.accounts||[]), ...(CFG.readItLaterAccounts||[])];
+  for(let attempt=0; attempt<3; attempt++){
+    const passphrase = prompt(attempt===0
+      ? "Enter your credentials passphrase to unlock NRP:"
+      : "Incorrect passphrase. Try again:");
+    if(passphrase === null){
+      toast("Locked \u2014 accounts needing credentials won't sync until unlocked (Settings \u2192 Security)");
+      return false;
+    }
+    try{
+      const {key} = await deriveKeyFromPassphrase(passphrase, CFG.credentialSalt);
+      const testAccount = allAccounts.find(a=>{
+        const fields = CRED_FIELDS[a.type];
+        return fields && fields.some(f=>isEncryptedBlob(a[f]));
+      });
+      if(testAccount){
+        const fields = CRED_FIELDS[testAccount.type];
+        const f = fields.find(f=>isEncryptedBlob(testAccount[f]));
+        await decryptString(key, testAccount[f]); // throws on wrong passphrase before we commit to it
+      }
+      credentialKey = key;
+      for(const a of allAccounts) await decryptAccountCredentials(a, key);
+      return true;
+    }catch(e){ /* wrong passphrase — loop and retry */ }
+  }
+  toast("Too many incorrect attempts \u2014 locked (Settings \u2192 Security to try again)");
+  return false;
+}
+
+async function enableCredentialEncryption(){
+  const p1 = prompt("Set a passphrase to encrypt stored credentials:");
+  if(p1 === null || !p1){ toast("Cancelled"); return; }
+  const p2 = prompt("Confirm passphrase:");
+  if(p1 !== p2){ toast("Passphrases didn't match"); return; }
+  try{
+    const {key, saltB64} = await deriveKeyFromPassphrase(p1, null);
+    credentialKey = key;
+    CFG.credentialSalt = saltB64;
+    CFG.credentialsEncrypted = true;
+    saveConfig(CFG);
+    toast("Credential encryption enabled");
+  }catch(e){
+    toast("Could not enable encryption: " + (e && e.message));
+  }
+  populateSecuritySection();
+}
+async function disableCredentialEncryption(){
+  if(!credentialKey){
+    const unlocked = await unlockCredentials();
+    if(!unlocked){ populateSecuritySection(); return; }
+  }
+  if(!confirm("Disable credential encryption? Stored tokens/passwords will be saved in plain text again.")){
+    populateSecuritySection(); return;
+  }
+  CFG.credentialsEncrypted = false;
+  CFG.credentialSalt = null;
+  credentialKey = null;
+  saveConfig(CFG);
+  toast("Credential encryption disabled");
+  populateSecuritySection();
+}
+async function changeCredentialPassphrase(){
+  if(!credentialKey){
+    const unlocked = await unlockCredentials();
+    if(!unlocked) return;
+  }
+  const p1 = prompt("New passphrase:");
+  if(p1 === null || !p1){ toast("Cancelled"); return; }
+  const p2 = prompt("Confirm new passphrase:");
+  if(p1 !== p2){ toast("Passphrases didn't match"); return; }
+  try{
+    const {key, saltB64} = await deriveKeyFromPassphrase(p1, null);
+    credentialKey = key;
+    CFG.credentialSalt = saltB64;
+    saveConfig(CFG);
+    toast("Passphrase changed");
+  }catch(e){
+    toast("Could not change passphrase: " + (e && e.message));
+  }
+}
+function populateSecuritySection(){
+  $("#cfg-encrypt-credentials").checked = !!CFG.credentialsEncrypted;
+  $("#btn-change-passphrase").classList.toggle("hidden", !CFG.credentialsEncrypted);
+  $("#btn-unlock-now").classList.toggle("hidden", !CFG.credentialsEncrypted || !!credentialKey);
+}
+
+$("#cfg-encrypt-credentials").addEventListener("change", async (e)=>{
+  const wantsEncryption = e.target.checked;
+  e.target.checked = !!CFG.credentialsEncrypted; // revert visually until the async flow actually confirms
+  if(wantsEncryption) await enableCredentialEncryption();
+  else await disableCredentialEncryption();
+});
+$("#btn-change-passphrase").addEventListener("click", changeCredentialPassphrase);
+$("#btn-unlock-now").addEventListener("click", async ()=>{
+  const ok = await unlockCredentials();
+  if(ok){ toast("Unlocked"); populateSecuritySection(); }
+});
+
 function populateConfigForm(){
   renderAccountsList();
   renderRlAccountsList();
+  populateSecuritySection();
   $("#app-version-label").textContent = "v" + APP_VERSION;
   $("#cfg-image-cache-mode").value = CFG.imageCacheMode;
 
@@ -2936,6 +3177,10 @@ $("#btn-save-account").addEventListener("click", async () => {
 window.editAccount = (id) => {
   const acc = CFG.accounts.find(a => a.id === id);
   if(!acc) return;
+  if(isEncryptedBlob(acc.token)){
+    toast("Unlock credentials first (Settings \u2192 Security) to edit this account");
+    return;
+  }
   $("#acc-form-id").value = acc.id;
   $("#acc-type").value = acc.type;
   $("#acc-name").value = acc.name;
@@ -3071,6 +3316,11 @@ $("#btn-save-rl-account").addEventListener("click", () => {
 window.editRlAccount = (id) => {
   const acc = (CFG.readItLaterAccounts||[]).find(a => a.id === id);
   if(!acc) return;
+  const fields = CRED_FIELDS[acc.type] || [];
+  if(fields.some(f=>isEncryptedBlob(acc[f]))){
+    toast("Unlock credentials first (Settings \u2192 Security) to edit this account");
+    return;
+  }
   $("#rl-form-id").value = acc.id;
   $("#rl-type").value = acc.type;
   $("#rl-name").value = acc.name;
@@ -3844,16 +4094,15 @@ async function reapOldStubsThrottled(){
 // non-starred, not-already-purged entries. Either rule can be disabled
 // independently (-1). Returns how many entries were purged, so the caller
 // can decide whether an orphan-image GC pass is worth running afterward.
-async function purgeFeedEntries(feedObj){
-  const purgeAfterDays = CFG.purgeReadAfterDays;
-  const maxPerFeed = CFG.maxEntriesPerFeed;
+// Pure decision logic, no I/O: given a feed's read/non-starred/not-yet-
+// purged entries and the two purge settings, returns which ones should be
+// purged. Split out from purgeFeedEntries() specifically so this — the
+// part actually worth getting right — can be unit tested without needing
+// IndexedDB or any other browser API. See test/nrp.test.js.
+function selectEntriesToPurge(candidates, {purgeAfterDays, maxEntriesPerFeed}){
   const ageEnabled = purgeAfterDays !== undefined && purgeAfterDays !== null && purgeAfterDays >= 0;
-  const capEnabled = maxPerFeed !== undefined && maxPerFeed !== null && maxPerFeed >= 0;
-  if(!ageEnabled && !capEnabled) return 0;
-
-  const entries = await getEntriesByFeed(feedObj.id);
-  const candidates = entries.filter(e => e.status === "read" && !e.starred && !e.purged);
-  if(candidates.length === 0) return 0;
+  const capEnabled = maxEntriesPerFeed !== undefined && maxEntriesPerFeed !== null && maxEntriesPerFeed >= 0;
+  if(!ageEnabled && !capEnabled) return [];
 
   const toPurge = new Map();
   if(ageEnabled){
@@ -3863,11 +4112,23 @@ async function purgeFeedEntries(feedObj){
       if(!isNaN(t) && t < cutoff) toPurge.set(e.id, e);
     });
   }
-  if(capEnabled && candidates.length > maxPerFeed){
+  if(capEnabled && candidates.length > maxEntriesPerFeed){
     candidates.slice().sort((a,b)=> new Date(b.publishedAt) - new Date(a.publishedAt))
-      .slice(maxPerFeed).forEach(e=> toPurge.set(e.id, e));
+      .slice(maxEntriesPerFeed).forEach(e=> toPurge.set(e.id, e));
   }
-  if(toPurge.size === 0) return 0;
+  return [...toPurge.values()];
+}
+
+async function purgeFeedEntries(feedObj){
+  const entries = await getEntriesByFeed(feedObj.id);
+  const candidates = entries.filter(e => e.status === "read" && !e.starred && !e.purged);
+  if(candidates.length === 0) return 0;
+
+  const toPurge = selectEntriesToPurge(candidates, {
+    purgeAfterDays: CFG.purgeReadAfterDays,
+    maxEntriesPerFeed: CFG.maxEntriesPerFeed
+  });
+  if(toPurge.length === 0) return 0;
 
   // Miniflux/NewsBlur sync only ever requests unread items from the server
   // (status=unread) — a fully-deleted, already-read entry can never come
@@ -3879,11 +4140,11 @@ async function purgeFeedEntries(feedObj){
   const account = CFG.accounts.find(a => a.id === feedObj.accountId);
   const needsStub = !account || account.type === "local";
   if(needsStub){
-    for(const entry of toPurge.values()){ await purgeEntryToStub(entry); }
+    for(const entry of toPurge){ await purgeEntryToStub(entry); }
   }else{
-    await deleteEntries([...toPurge.keys()]);
+    await deleteEntries(toPurge.map(e=>e.id));
   }
-  return toPurge.size;
+  return toPurge.length;
 }
 
 async function removeFeed(feedUid){
@@ -4645,6 +4906,8 @@ async function init(){
   $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
 
   setupServiceWorker();
+
+  await unlockCredentials();
 
   if(!CFG.accounts || CFG.accounts.length === 0){
     navigate("screen-config", {title:"Settings"});
