@@ -869,7 +869,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.85"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.86"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -5301,6 +5301,21 @@ function nextArticle(){
   if(idx === -1 || idx === lastArticleOrder.length-1){ toast("No more articles in this list"); return; }
   openArticle(lastArticleOrder[idx+1], {replace:true});
 }
+function prevArticle(){
+  if(!currentEntry || lastArticleOrder.length===0) return;
+  const idx = lastArticleOrder.indexOf(currentEntry.id);
+  if(idx <= 0){ toast("No previous article in this list"); return; }
+  openArticle(lastArticleOrder[idx-1], {replace:true});
+}
+// Swipe left/right on the article view itself navigates next/previous,
+// same list-order semantics as the topbar's next-article button (and the
+// new prevArticle above) — attached once here, not inside openArticle(),
+// since #screen-article is a static element that always exists; attaching
+// fresh on every article open would just accumulate duplicate listeners.
+attachSwipeActions($("#screen-article"), {
+  onSwipeLeft: ()=>nextArticle(),
+  onSwipeRight: ()=>prevArticle()
+});
 
 // Shared by markRead/markUnread/toggleStar below, and by the swipe-to-mark
 // gestures on article list rows — the local-write + remote-sync-with-
