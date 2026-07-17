@@ -207,13 +207,21 @@ try{
     background:var(--accent); color:var(--accent-fg); border:none; font-weight:700;
     font-size:12px; border-radius:2px;
   }
+  .screen-context-label{
+    position:fixed; left:50%; bottom:1.2em; transform:translateX(-50%);
+    background:color-mix(in srgb, var(--fg) 60%, transparent); color:var(--bg);
+    padding:.5em 1em; border-radius:3px; font-size:12px; font-weight:600;
+    z-index:40; max-width:88vw; text-align:center; pointer-events:none;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  html.toolbar-bottom .screen-context-label{ bottom:4.5em; }
 
   .bg-task-indicator{
-    position:fixed; left:50%; bottom:3.2em; transform:translateX(-50%);
+    position:fixed; left:50%; bottom:3.6em; transform:translateX(-50%);
     background:var(--accent); color:var(--accent-fg); padding:3px 10px; border-radius:12px;
     font-size:11px; z-index:9999; font-weight:700; opacity:0.9; pointer-events:none;
   }
-  html.toolbar-bottom .bg-task-indicator{ bottom:6.5em; }
+  html.toolbar-bottom .bg-task-indicator{ bottom:6.9em; }
 
   /* Toolbar placement config */
   html.toolbar-bottom .topbar {
@@ -498,9 +506,9 @@ fieldset legend {
         <label for="cfg-startup-mode">Startup screen</label>
         <select id="cfg-startup-mode"></select>
         <label for="cfg-auto-sync-minutes">Auto-sync while open (minutes, -1 = off)</label>
-        <input id="cfg-auto-sync-minutes" type="number" min="-1" step="1" value="15">
+        <input id="cfg-auto-sync-minutes" type="number" min="-1" step="1" value="-1">
         <p class="muted" style="font-size:11px; margin:.4em 0 0;">
-          Only syncs while NRP is actually open and visible in this tab \u2014 not a true background
+          Only syncs while NRP is actually open and visible in this tab &mdash; not a true background
           sync, since that needs OS/browser support this app doesn't rely on. If NRP is fully
           closed or backgrounded, nothing syncs until you reopen it or pull to refresh.
         </p>
@@ -838,6 +846,7 @@ fieldset legend {
     <div id="search-results"></div>
   </section>
 
+  <div id="screen-context-label" class="screen-context-label hidden"></div>
   <div id="toast" class="toast"></div>
 
 <script>
@@ -856,7 +865,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.79"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.82"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -884,7 +893,7 @@ const DEFAULT_CFG = {
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   purgeReadAfterDays:30, maxEntriesPerFeed:-1, stubReapAfterDays:90,
-  autoSyncMinutes:15,
+  autoSyncMinutes:-1,
   credentialsEncrypted:false, credentialSalt:null, staySignedInSession:true,
   maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[],
@@ -2734,9 +2743,18 @@ function showScreen(id, opts){
   $("#btn-bulk-mark").classList.toggle("hidden", id !== "screen-articles");
   updateBulkMarkButton();
 
-  $("#top-title").textContent = opts.title || "NRP";
+  const isArticleContext = (id === "screen-articles" || id === "screen-article");
+  $("#top-title").textContent = isArticleContext ? "NRP" : (opts.title || "NRP");
   $("#top-actions").innerHTML = "";
   (opts.actions||[]).forEach(a=>$("#top-actions").appendChild(a));
+
+  const contextLabel = $("#screen-context-label");
+  if(isArticleContext && opts.title){
+    contextLabel.textContent = opts.title;
+    contextLabel.classList.remove("hidden");
+  }else{
+    contextLabel.classList.add("hidden");
+  }
 }
 function navigate(id, opts){
   if(currentScreen) navStack.push({id:currentScreen, opts:lastOpts});
@@ -3226,7 +3244,7 @@ function populateConfigForm(){
   $("#cfg-light-bg").value = CFG.lightBg; $("#cfg-light-fg").value = CFG.lightFg;
   $("#cfg-dark-bg").value = CFG.darkBg; $("#cfg-dark-fg").value = CFG.darkFg;
 
-  $("#cfg-auto-sync-minutes").value = (CFG.autoSyncMinutes === undefined ? 15 : CFG.autoSyncMinutes);
+  $("#cfg-auto-sync-minutes").value = (CFG.autoSyncMinutes === undefined ? -1 : CFG.autoSyncMinutes);
   $("#cfg-never-fetch-images").checked = !!CFG.neverFetchImages;
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
@@ -4296,7 +4314,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.ffArtBody = $("#cfg-ff-art-body").value;
 
   CFG.autoSyncMinutes = parseInt($("#cfg-auto-sync-minutes").value, 10);
-  if(isNaN(CFG.autoSyncMinutes)) CFG.autoSyncMinutes = 15;
+  if(isNaN(CFG.autoSyncMinutes)) CFG.autoSyncMinutes = -1;
   scheduleAutoSync();
   CFG.neverFetchImages = $("#cfg-never-fetch-images").checked;
   CFG.density = $("#cfg-density").value;
