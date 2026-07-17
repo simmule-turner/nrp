@@ -61,4 +61,11 @@ function extractMany(html, names) {
   return names.map(n => extractFunctionSource(html, n)).join("\n\n");
 }
 
-module.exports = { extractFunctionSource, extractMany };
+function extractConstSource(html, name) {
+  const re = new RegExp("(^|\\n)[ \\t]*const\\s+" + name + "\\s*=\\s*[^;\\n]+;?", "");
+  const m = re.exec(html);
+  if (!m) throw new Error(`extractConstSource: "${name}" not found`);
+  return m[0].replace(/^\n/, "").trim();
+}
+
+module.exports = { extractFunctionSource, extractMany, extractConstSource };
