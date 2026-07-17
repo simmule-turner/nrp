@@ -516,6 +516,10 @@ fieldset legend {
           <label style="margin:0;">Never fetch images</label>
           <input id="cfg-never-fetch-images" type="checkbox">
         </div>
+        <div class="row between" style="margin-top:1em;">
+          <label style="margin:0;">Show feed name while reading an article</label>
+          <input id="cfg-show-feedname-article" type="checkbox">
+        </div>
         <label for="cfg-density">Article list display</label>
         <select id="cfg-density">
           <option value="text">Text only</option>
@@ -832,7 +836,7 @@ fieldset legend {
     <div class="art-head">
       <h2 id="art-title"></h2>
       <div class="meta">
-        <span id="art-feedname"></span> &middot; <span id="art-date"></span>
+        <span id="art-feedname-wrap"><span id="art-feedname"></span> &middot; </span><span id="art-date"></span>
       </div>
     </div>
     <div id="art-content" class="art-content"></div>
@@ -865,7 +869,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.82"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.83"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -893,7 +897,7 @@ const DEFAULT_CFG = {
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   purgeReadAfterDays:30, maxEntriesPerFeed:-1, stubReapAfterDays:90,
-  autoSyncMinutes:-1,
+  autoSyncMinutes:-1, showFeedNameInArticle:true,
   credentialsEncrypted:false, credentialSalt:null, staySignedInSession:true,
   maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[],
@@ -2749,7 +2753,8 @@ function showScreen(id, opts){
   (opts.actions||[]).forEach(a=>$("#top-actions").appendChild(a));
 
   const contextLabel = $("#screen-context-label");
-  if(isArticleContext && opts.title){
+  const showLabel = isArticleContext && opts.title && (id !== "screen-article" || CFG.showFeedNameInArticle);
+  if(showLabel){
     contextLabel.textContent = opts.title;
     contextLabel.classList.remove("hidden");
   }else{
@@ -3246,6 +3251,7 @@ function populateConfigForm(){
 
   $("#cfg-auto-sync-minutes").value = (CFG.autoSyncMinutes === undefined ? -1 : CFG.autoSyncMinutes);
   $("#cfg-never-fetch-images").checked = !!CFG.neverFetchImages;
+  $("#cfg-show-feedname-article").checked = CFG.showFeedNameInArticle !== false;
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
   $("#cfg-cache-size").value = String(CFG.cacheSizeLimit);
@@ -4317,6 +4323,7 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   if(isNaN(CFG.autoSyncMinutes)) CFG.autoSyncMinutes = -1;
   scheduleAutoSync();
   CFG.neverFetchImages = $("#cfg-never-fetch-images").checked;
+  CFG.showFeedNameInArticle = $("#cfg-show-feedname-article").checked;
   CFG.density = $("#cfg-density").value;
   CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
   CFG.cacheSizeLimit = parseInt($("#cfg-cache-size").value, 10);
@@ -5187,6 +5194,16 @@ function showRilAccountMenu(accounts, anchorEl){
   });
 }
 
+// entry.feedTitle is normally set at sync time from the account's own API
+// response — this only matters as a fallback for the rare case that's
+// missing, in which case the feed's own selectedFeeds title (what's shown
+// everywhere else in the app) is a real name, not a generic placeholder.
+function getFeedDisplayName(entry){
+  if(entry.feedTitle) return entry.feedTitle;
+  const sf = CFG.selectedFeeds.find(f => f.id === entry.feedId);
+  return (sf && sf.title) || "Unknown feed";
+}
+
 async function openArticle(entryId, opts){
   opts = opts || {};
   const entry = await getEntry(entryId);
@@ -5235,7 +5252,7 @@ async function openArticle(entryId, opts){
     nextBtn.style.cursor = "default";
   }
 
-  const screenOpts = {title: entry.feedTitle||"Article", actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
+  const screenOpts = {title: getFeedDisplayName(entry), actions:[starBtn, unreadBtn, wbBtn, nextBtn]};
   if(opts.replace){
     updateScreen("screen-article", screenOpts);
     if(!opts.keepScroll) $("#screen-article").scrollTop = 0;
@@ -5246,7 +5263,8 @@ async function openArticle(entryId, opts){
 
   $("#art-title").textContent = entry.title;
   $("#art-title").onclick = ()=>window.open(entry.url, "_blank", "noopener");
-  $("#art-feedname").textContent = entry.feedTitle || "";
+  $("#art-feedname").textContent = getFeedDisplayName(entry);
+  $("#art-feedname-wrap").classList.toggle("hidden", !CFG.showFeedNameInArticle);
   $("#art-date").textContent = formatDate(entry.publishedAt);
 
   const contentDiv = $("#art-content");
