@@ -356,7 +356,7 @@ fieldset legend {
           </div>
           <label for="acc-api-proxy-url">Proxy URL (prepended to API request URL)</label>
           <input id="acc-api-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <div class="row between" style="margin-top:.9em;">
+          <div class="row between" style="margin:1em 0 .5em;">
             <label style="margin:0;">Send custom headers</label>
             <input id="acc-api-proxy-headers-enabled" type="checkbox">
           </div>
@@ -373,7 +373,7 @@ fieldset legend {
           </div>
           <label for="acc-nonapi-proxy-url">Proxy URL (prepended to image URL)</label>
           <input id="acc-nonapi-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <div class="row between" style="margin-top:.9em;">
+          <div class="row between" style="margin:1em 0 .5em;">
             <label style="margin:0;">Send custom headers</label>
             <input id="acc-nonapi-proxy-headers-enabled" type="checkbox">
           </div>
@@ -478,7 +478,7 @@ fieldset legend {
           </div>
           <label for="rl-proxy-url">Proxy URL (prepended to request URL)</label>
           <input id="rl-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <div class="row between" style="margin-top:.9em;">
+          <div class="row between" style="margin:1em 0 .5em;">
             <label style="margin:0;">Send custom headers</label>
             <input id="rl-proxy-headers-enabled" type="checkbox">
           </div>
@@ -869,7 +869,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.84"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.85"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
