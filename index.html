@@ -356,7 +356,7 @@ fieldset legend {
           </div>
           <label for="acc-api-proxy-url">Proxy URL (prepended to API request URL)</label>
           <input id="acc-api-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <div class="row between">
+          <div class="row between" style="margin-top:.9em;">
             <label style="margin:0;">Send custom headers</label>
             <input id="acc-api-proxy-headers-enabled" type="checkbox">
           </div>
@@ -373,7 +373,7 @@ fieldset legend {
           </div>
           <label for="acc-nonapi-proxy-url">Proxy URL (prepended to image URL)</label>
           <input id="acc-nonapi-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <div class="row between">
+          <div class="row between" style="margin-top:.9em;">
             <label style="margin:0;">Send custom headers</label>
             <input id="acc-nonapi-proxy-headers-enabled" type="checkbox">
           </div>
@@ -478,7 +478,7 @@ fieldset legend {
           </div>
           <label for="rl-proxy-url">Proxy URL (prepended to request URL)</label>
           <input id="rl-proxy-url" type="text" placeholder="https://cors-proxy.example.com/">
-          <div class="row between">
+          <div class="row between" style="margin-top:.9em;">
             <label style="margin:0;">Send custom headers</label>
             <input id="rl-proxy-headers-enabled" type="checkbox">
           </div>
@@ -741,6 +741,31 @@ fieldset legend {
       </fieldset>
 
       <fieldset>
+        <legend id="logging-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Logging</legend>
+        <div id="logging-body" class="collapsible-body">
+        <p class="muted" style="font-size:11px; margin:0 0 .6em;">
+          A lightweight diagnostic log for troubleshooting: images too large to cache in full (re-fetched from the network each time they're shown, though thumbnails for these are still cached where possible), plus thumbnail-generation tracing and other app events.
+        </p>
+        <div id="oversized-list" class="chk-list" style="max-height:200px;"></div>
+        <div class="row" style="margin-top:.6em;">
+          <button id="btn-clear-oversized" class="grow">Clear log</button>
+        </div>
+        <hr>
+        <div class="row between wrap" style="gap:.6em;">
+          <span class="muted">Pending sync actions: <span id="outbox-count" class="mono-num">&mdash;</span></span>
+          <button id="btn-clear-outbox">Clear pending queue</button>
+        </div>
+        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
+          Read/unread, star, and send-to-read-it-later actions that couldn't reach the server yet
+          (offline, or the server rejected them) wait here and retry automatically, up to 15 attempts
+          before being given up on and logged above. Clearing removes them without retrying further —
+          your local read/unread/starred state is unaffected either way, only whether it's ever
+          reflected on the server.
+        </p>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend id="security-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Security</legend>
         <div id="security-body" class="collapsible-body">
         <div class="row between">
@@ -776,31 +801,6 @@ fieldset legend {
         <div class="row wrap" style="margin-top:.4em; gap:.4em;">
           <button type="button" id="btn-reset-encryption" class="grow hidden danger">Forgot passphrase? Reset</button>
         </div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend id="logging-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Logging</legend>
-        <div id="logging-body" class="collapsible-body">
-        <p class="muted" style="font-size:11px; margin:0 0 .6em;">
-          A lightweight diagnostic log for troubleshooting: images too large to cache in full (re-fetched from the network each time they're shown, though thumbnails for these are still cached where possible), plus thumbnail-generation tracing and other app events.
-        </p>
-        <div id="oversized-list" class="chk-list" style="max-height:200px;"></div>
-        <div class="row" style="margin-top:.6em;">
-          <button id="btn-clear-oversized" class="grow">Clear log</button>
-        </div>
-        <hr>
-        <div class="row between wrap" style="gap:.6em;">
-          <span class="muted">Pending sync actions: <span id="outbox-count" class="mono-num">&mdash;</span></span>
-          <button id="btn-clear-outbox">Clear pending queue</button>
-        </div>
-        <p class="muted" style="font-size:11px; margin:.6em 0 0;">
-          Read/unread, star, and send-to-read-it-later actions that couldn't reach the server yet
-          (offline, or the server rejected them) wait here and retry automatically, up to 15 attempts
-          before being given up on and logged above. Clearing removes them without retrying further —
-          your local read/unread/starred state is unaffected either way, only whether it's ever
-          reflected on the server.
-        </p>
         </div>
       </fieldset>
 
@@ -869,7 +869,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.83"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.84"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -2825,6 +2825,8 @@ $("#btn-back").addEventListener("click", ()=>{
   if(prev.id === "screen-articles"){
     renderArticleList();
   }else if(prev.id === "screen-feeds"){         refreshCounters().then(renderFeedList);
+  }else if(prev.id === "screen-search"){
+    runSearch();
   }
 });
 $("#btn-config").addEventListener("click", ()=>{
