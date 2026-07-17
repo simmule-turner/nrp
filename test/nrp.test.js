@@ -25,7 +25,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { extractFunctionSource } = require("./extract.js");
+const { extractFunctionSource, extractConstSource } = require("./extract.js");
+
+// Node's built-in webcrypto is API-compatible with the browser's
+// crypto.subtle/crypto.getRandomValues that the extracted encryption
+// functions reference as globals — no new dependency needed to test them.
+if (!global.crypto) global.crypto = require("crypto").webcrypto;
 
 const html = fs.readFileSync(path.join(__dirname, "..", "nrp.html"), "utf8");
 
@@ -36,12 +41,20 @@ const FUNCTIONS = [
   "mbLimitToBytes",
   "hashString",
   "buildHeadersFromList",
-  "selectEntriesToPurge"
+  "selectEntriesToPurge",
+  "bytesToBase64",
+  "base64ToBytes",
+  "deriveKeyFromPassphrase",
+  "encryptString",
+  "decryptString",
+  "isEncryptedBlob"
 ];
+const CONSTANTS = ["PBKDF2_ITERATIONS"];
 
 function loadFunctions() {
-  const src = FUNCTIONS.map(n => extractFunctionSource(html, n)).join("\n\n");
-  const ctor = new Function(src + "\n\nreturn {" + FUNCTIONS.join(",") + "};");
+  const constSrc = CONSTANTS.map(n => extractConstSource(html, n)).join("\n");
+  const fnSrc = FUNCTIONS.map(n => extractFunctionSource(html, n)).join("\n\n");
+  const ctor = new Function(constSrc + "\n\n" + fnSrc + "\n\nreturn {" + FUNCTIONS.join(",") + "};");
   return ctor();
 }
 
@@ -196,4 +209,59 @@ test("selectEntriesToPurge: entries with an unparseable publishedAt are never pu
 
 test("selectEntriesToPurge: empty candidate list always returns empty, regardless of settings", () => {
   assert.deepEqual(lib.selectEntriesToPurge([], { purgeAfterDays: 0, maxEntriesPerFeed: 0 }), []);
+});
+
+// ---- credential encryption engine ----
+// The newest and most security-sensitive code in the app, added without
+// any test coverage at the time — these tests close that gap specifically.
+
+test("encryption: round-trip returns the original plaintext", async () => {
+  const { key } = await lib.deriveKeyFromPassphrase("correct horse battery staple", null);
+  const blob = await lib.encryptString(key, "super-secret-api-token-123");
+  assert.equal(lib.isEncryptedBlob(blob), true);
+  const plaintext = await lib.decryptString(key, blob);
+  assert.equal(plaintext, "super-secret-api-token-123");
+});
+
+test("encryption: same salt + same passphrase derives the same key (can re-decrypt after 'reload')", async () => {
+  const first = await lib.deriveKeyFromPassphrase("my passphrase", null);
+  const blob = await lib.encryptString(first.key, "hello");
+  // Simulates unlocking again later: only the salt (non-secret, stored in
+  // CFG) and the passphrase (never stored) are available — same as a real
+  // app reload.
+  const second = await lib.deriveKeyFromPassphrase("my passphrase", first.saltB64);
+  const plaintext = await lib.decryptString(second.key, blob);
+  assert.equal(plaintext, "hello");
+});
+
+test("encryption: wrong passphrase throws on decrypt rather than returning wrong plaintext", async () => {
+  const right = await lib.deriveKeyFromPassphrase("right passphrase", null);
+  const blob = await lib.encryptString(right.key, "hello");
+  const wrong = await lib.deriveKeyFromPassphrase("wrong passphrase", right.saltB64);
+  await assert.rejects(() => lib.decryptString(wrong.key, blob));
+});
+
+test("encryption: two encryptions of the same plaintext never produce identical ciphertext", async () => {
+  // Each encryption uses a fresh random IV — if this ever failed, it would
+  // mean IV reuse, which breaks AES-GCM's security guarantees entirely.
+  const { key } = await lib.deriveKeyFromPassphrase("pw", null);
+  const a = await lib.encryptString(key, "same plaintext");
+  const b = await lib.encryptString(key, "same plaintext");
+  assert.notEqual(a.iv, b.iv);
+  assert.notEqual(a.data, b.data);
+});
+
+test("encryption: isEncryptedBlob correctly distinguishes blobs from plain strings", () => {
+  assert.equal(lib.isEncryptedBlob({ __enc: true, iv: "x", data: "y" }), true);
+  assert.ok(!lib.isEncryptedBlob("a plain token string"));
+  assert.ok(!lib.isEncryptedBlob(null));
+  assert.ok(!lib.isEncryptedBlob(undefined));
+  assert.ok(!lib.isEncryptedBlob({}));
+});
+
+test("base64 round-trip preserves arbitrary bytes", () => {
+  const original = new Uint8Array([0, 1, 2, 250, 251, 252, 253, 254, 255]);
+  const b64 = lib.bytesToBase64(original);
+  const back = lib.base64ToBytes(b64);
+  assert.deepEqual(Array.from(back), Array.from(original));
 });
