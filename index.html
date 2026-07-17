@@ -146,6 +146,7 @@ try{
   }
   .feed-row:active{ background:var(--raised); }
   .feed-row .name{ flex:1; min-width:0; font-family:var(--font-family-feed); font-size:var(--fs-feed); font-weight:var(--fw-feed); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .feed-warning{ flex:0 0 auto; color:var(--danger); font-size:1.1em; }
   .empty{ padding:2.5em 1.4em; text-align:center; color:var(--muted); }
   .empty .big{ font-size:13px; font-family:var(--font-ui); letter-spacing:.04em; margin-bottom:.5em; }
 
@@ -201,6 +202,11 @@ try{
     opacity:0; pointer-events:none; transition:opacity .2s ease;
   }
   .toast.show{ opacity:1; }
+  .toast-action{
+    pointer-events:auto; margin-left:.8em; padding:.2em .6em; min-height:auto;
+    background:var(--accent); color:var(--accent-fg); border:none; font-weight:700;
+    font-size:12px; border-radius:2px;
+  }
 
   .bg-task-indicator{
     position:fixed; left:50%; bottom:3.2em; transform:translateX(-50%);
@@ -282,6 +288,7 @@ fieldset legend {
     </span>
     <button id="btn-bulk-mark" class="icon hidden" aria-label="Mark all" disabled>&#9899;</button>
     <button id="btn-top-save" class="icon hidden" aria-label="Save Config">&#128190;</button>
+    <button id="btn-search" class="icon" aria-label="Search">&#128269;</button>
     <button id="btn-config" class="icon" aria-label="Settings">&#128736;</button>
   </div>
 
@@ -490,6 +497,13 @@ fieldset legend {
         </select>
         <label for="cfg-startup-mode">Startup screen</label>
         <select id="cfg-startup-mode"></select>
+        <label for="cfg-auto-sync-minutes">Auto-sync while open (minutes, -1 = off)</label>
+        <input id="cfg-auto-sync-minutes" type="number" min="-1" step="1" value="15">
+        <p class="muted" style="font-size:11px; margin:.4em 0 0;">
+          Only syncs while NRP is actually open and visible in this tab \u2014 not a true background
+          sync, since that needs OS/browser support this app doesn't rely on. If NRP is fully
+          closed or backgrounded, nothing syncs until you reopen it or pull to refresh.
+        </p>
         <div class="row between" style="margin-top:1em;">
           <label style="margin:0;">Never fetch images</label>
           <input id="cfg-never-fetch-images" type="checkbox">
@@ -726,12 +740,29 @@ fieldset legend {
           Protects against casual exposure — e.g. someone reading an exported config file or
           browser storage directly — but not against a compromised device, where JavaScript could
           read the passphrase as you type it. Proxy header values (custom auth headers, if you use
-          them) aren't covered by this. Off by default. If you forget this passphrase, encrypted
-          credentials can't be recovered — you'd need to re-enter them for each account.
+          them) aren't covered by this. Off by default. The passphrase itself is never stored — if
+          you forget it, the encrypted values themselves can't be recovered, but you can reset
+          encryption below and re-enter credentials for the affected accounts.
+        </p>
+        <div class="row between" style="margin-top:.8em;">
+          <label style="margin:0;">Stay unlocked for this browser session</label>
+          <input id="cfg-stay-signed-in" type="checkbox">
+        </div>
+        <p class="muted" style="font-size:11px; margin:.4em 0 0;">
+          Without this, expect to be asked for your passphrase surprisingly often — mobile browsers
+          (Android especially) frequently reload backgrounded tabs, and each reload otherwise means
+          re-entering it. This caches the derived key in this tab's session storage (cleared when
+          the tab/browser fully closes, separately expires after an hour either way) rather than
+          the passphrase itself — a real convenience/security tradeoff, not a free lunch: anyone
+          with access to this tab's dev tools during that window could extract the cached key. On
+          by default.
         </p>
         <div class="row wrap" style="margin-top:.8em; gap:.4em;">
           <button type="button" id="btn-change-passphrase" class="grow hidden">Change passphrase</button>
           <button type="button" id="btn-unlock-now" class="grow hidden">Unlock now</button>
+        </div>
+        <div class="row wrap" style="margin-top:.4em; gap:.4em;">
+          <button type="button" id="btn-reset-encryption" class="grow hidden danger">Forgot passphrase? Reset</button>
         </div>
         </div>
       </fieldset>
@@ -799,6 +830,14 @@ fieldset legend {
     <div id="art-content" class="art-content"></div>
   </section>
 
+  <!-- ===== SEARCH SCREEN ===== -->
+  <section id="screen-search" class="screen hidden">
+    <div class="sticky-header" style="padding:.6em .9em;">
+      <input id="search-input" type="text" placeholder="Search article titles and content&hellip;" style="width:100%;">
+    </div>
+    <div id="search-results"></div>
+  </section>
+
   <div id="toast" class="toast"></div>
 
 <script>
@@ -817,7 +856,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.78"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.79"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -845,7 +884,8 @@ const DEFAULT_CFG = {
   fsArtBody: 16, fwArtBody: false,
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   purgeReadAfterDays:30, maxEntriesPerFeed:-1, stubReapAfterDays:90,
-  credentialsEncrypted:false, credentialSalt:null,
+  autoSyncMinutes:15,
+  credentialsEncrypted:false, credentialSalt:null, staySignedInSession:true,
   maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[],
   toolbarPlacement: "top",
@@ -2671,7 +2711,7 @@ function sanitizeHtml(html){
 
 /* ============================= UI PLUMBING ============================= */
 const $ = sel => document.querySelector(sel);
-const screens = ["screen-config","screen-feeds","screen-articles","screen-article"];
+const screens = ["screen-config","screen-feeds","screen-articles","screen-article","screen-search"];
 let navStack = []; let currentScreen = null;
 
 function showScreen(id, opts){
@@ -2717,10 +2757,27 @@ function saveLastArticleView(entry){
       folderName: currentFolderName,
       filter: articleFilter,
       order: lastArticleOrder,
+      scrollTop: 0,
       ts: Date.now()
     }));
   }catch(e){}
 }
+let scrollSaveTimer = null;
+$("#screen-article").addEventListener("scroll", ()=>{
+  if(currentScreen !== "screen-article" || !currentEntry) return;
+  clearTimeout(scrollSaveTimer);
+  scrollSaveTimer = setTimeout(()=>{
+    try{
+      const raw = localStorage.getItem(LAST_ARTICLE_KEY);
+      if(!raw) return;
+      const parsed = JSON.parse(raw);
+      if(parsed.entryId !== currentEntry.id) return; // stale — some other article's save, don't touch it
+      parsed.scrollTop = $("#screen-article").scrollTop;
+      parsed.ts = Date.now();
+      localStorage.setItem(LAST_ARTICLE_KEY, JSON.stringify(parsed));
+    }catch(e){}
+  }, 400);
+}, {passive:true});
 function clearLastArticleView(){
   try{ localStorage.removeItem(LAST_ARTICLE_KEY); }catch(e){}
 }
@@ -2760,11 +2817,28 @@ $("#btn-top-save").addEventListener("click", () => {
 });
 
 let toastTimer = null;
-function toast(msg){
+function toast(msg, opts){
+  opts = opts || {};
   const el = $("#toast");
-  el.textContent = msg; el.classList.add("show");
+  el.innerHTML = "";
+  el.appendChild(document.createTextNode(msg));
+  if(opts.actionLabel && opts.onAction){
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = opts.actionLabel;
+    btn.className = "toast-action";
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      clearTimeout(toastTimer);
+      el.classList.remove("show");
+      opts.onAction();
+    });
+    el.appendChild(btn);
+  }
+  el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>el.classList.remove("show"), 2600);
+  const duration = opts.duration || (opts.actionLabel ? 5000 : 2600);
+  toastTimer = setTimeout(()=>el.classList.remove("show"), duration);
 }
 
 // Generic long-press-vs-short-press handler for an element: a hold past
@@ -2802,6 +2876,53 @@ function attachLongPress(el, {onShortPress, onLongPress, excludeSelector}){
   el.addEventListener("mousedown", start);
   el.addEventListener("mouseup", end);
   el.addEventListener("mouseleave", cancel);
+}
+
+// Horizontal swipe-to-mark gesture for article list rows. Doesn't commit to
+// "this is a swipe, not a scroll" until the movement is clearly more
+// horizontal than vertical (a 1.5x ratio), so normal vertical list
+// scrolling isn't affected — most touch movement starts out ambiguous for
+// a few pixels either way. Gives a visual nudge (translateX) as feedback
+// during the drag, snapping back afterward regardless of whether the swipe
+// crossed the action threshold.
+const SWIPE_THRESHOLD_PX = 70;
+const SWIPE_DECIDE_PX = 12;
+function attachSwipeActions(el, {onSwipeLeft, onSwipeRight}){
+  let startX = 0, startY = 0, tracking = false, decided = false, isHorizontal = false;
+  el.addEventListener("touchstart", (ev)=>{
+    if(ev.touches.length !== 1) return;
+    startX = ev.touches[0].clientX; startY = ev.touches[0].clientY;
+    tracking = true; decided = false; isHorizontal = false;
+  }, {passive:true});
+  el.addEventListener("touchmove", (ev)=>{
+    if(!tracking) return;
+    const dx = ev.touches[0].clientX - startX;
+    const dy = ev.touches[0].clientY - startY;
+    if(!decided && (Math.abs(dx) > SWIPE_DECIDE_PX || Math.abs(dy) > SWIPE_DECIDE_PX)){
+      decided = true;
+      isHorizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+    }
+    if(isHorizontal){
+      el.style.transition = "none";
+      el.style.transform = `translateX(${Math.max(-100, Math.min(100, dx))}px)`;
+    }
+  }, {passive:true});
+  el.addEventListener("touchend", (ev)=>{
+    if(!tracking) return;
+    tracking = false;
+    if(isHorizontal){
+      const dx = ev.changedTouches[0].clientX - startX;
+      el.style.transition = "transform .2s ease";
+      el.style.transform = "";
+      if(dx <= -SWIPE_THRESHOLD_PX && onSwipeLeft) onSwipeLeft();
+      else if(dx >= SWIPE_THRESHOLD_PX && onSwipeRight) onSwipeRight();
+    }
+  });
+  el.addEventListener("touchcancel", ()=>{
+    tracking = false;
+    el.style.transition = "transform .2s ease";
+    el.style.transform = "";
+  });
 }
 
 // Generic small positioned popup menu: a list of clickable option buttons,
@@ -2891,9 +3012,58 @@ setupCollapsibleSection("exportimport", "exportimport-legend", "exportimport-bod
 // with zero awareness this happened. Returns false (locked) if the user
 // cancels or fails all attempts; accounts needing those credentials just
 // won't be able to sync until unlocked from Settings.
+const SESSION_KEY_STORAGE = "nrp_session_credential_key";
+const SESSION_KEY_MAX_AGE_MS = 60 * 60 * 1000; // re-derivation required after this regardless of sessionStorage surviving
+async function cacheKeyForSession(key){
+  if(!CFG.staySignedInSession) return;
+  try{
+    const raw = await crypto.subtle.exportKey("raw", key);
+    sessionStorage.setItem(SESSION_KEY_STORAGE, JSON.stringify({
+      key: bytesToBase64(new Uint8Array(raw)),
+      expiresAt: Date.now() + SESSION_KEY_MAX_AGE_MS
+    }));
+  }catch(e){ /* non-fatal — just means the next load prompts again */ }
+}
+async function loadCachedSessionKey(){
+  if(!CFG.staySignedInSession) return null;
+  try{
+    const raw = sessionStorage.getItem(SESSION_KEY_STORAGE);
+    if(!raw) return null;
+    const {key, expiresAt} = JSON.parse(raw);
+    if(Date.now() > expiresAt){ sessionStorage.removeItem(SESSION_KEY_STORAGE); return null; }
+    return await crypto.subtle.importKey("raw", base64ToBytes(key), {name:"AES-GCM"}, true, ["encrypt","decrypt"]);
+  }catch(e){ return null; }
+}
+function clearCachedSessionKey(){
+  try{ sessionStorage.removeItem(SESSION_KEY_STORAGE); }catch(e){}
+}
+
 async function unlockCredentials(){
   if(!CFG.credentialsEncrypted) return true;
   const allAccounts = [...(CFG.accounts||[]), ...(CFG.readItLaterAccounts||[])];
+
+  // Try the session-cached key first — if it works, no prompt needed at
+  // all. Verified the same way a freshly-entered passphrase is (attempt a
+  // real decrypt), so a corrupted or tampered cache entry can't silently
+  // "unlock" with wrong data.
+  const cachedKey = await loadCachedSessionKey();
+  if(cachedKey){
+    try{
+      const testAccount = allAccounts.find(a=>{
+        const fields = CRED_FIELDS[a.type];
+        return fields && fields.some(f=>isEncryptedBlob(a[f]));
+      });
+      if(testAccount){
+        const fields = CRED_FIELDS[testAccount.type];
+        const f = fields.find(f=>isEncryptedBlob(testAccount[f]));
+        await decryptString(cachedKey, testAccount[f]);
+      }
+      credentialKey = cachedKey;
+      for(const a of allAccounts) await decryptAccountCredentials(a, cachedKey);
+      return true;
+    }catch(e){ clearCachedSessionKey(); /* fall through to prompting */ }
+  }
+
   for(let attempt=0; attempt<3; attempt++){
     const passphrase = prompt(attempt===0
       ? "Enter your credentials passphrase to unlock NRP:"
@@ -2915,6 +3085,7 @@ async function unlockCredentials(){
       }
       credentialKey = key;
       for(const a of allAccounts) await decryptAccountCredentials(a, key);
+      await cacheKeyForSession(key);
       return true;
     }catch(e){ /* wrong passphrase — loop and retry */ }
   }
@@ -2922,9 +3093,14 @@ async function unlockCredentials(){
   return false;
 }
 
+function isWeakPassphrase(p){ return !p || p.length < 8; }
+
 async function enableCredentialEncryption(){
   const p1 = prompt("Set a passphrase to encrypt stored credentials:");
   if(p1 === null || !p1){ toast("Cancelled"); return; }
+  if(isWeakPassphrase(p1) && !confirm("This passphrase is short and may be easy to guess. Use it anyway?")){
+    toast("Cancelled"); return;
+  }
   const p2 = prompt("Confirm passphrase:");
   if(p1 !== p2){ toast("Passphrases didn't match"); return; }
   try{
@@ -2933,6 +3109,7 @@ async function enableCredentialEncryption(){
     CFG.credentialSalt = saltB64;
     CFG.credentialsEncrypted = true;
     saveConfig(CFG);
+    await cacheKeyForSession(key);
     toast("Credential encryption enabled");
   }catch(e){
     toast("Could not enable encryption: " + (e && e.message));
@@ -2950,6 +3127,7 @@ async function disableCredentialEncryption(){
   CFG.credentialsEncrypted = false;
   CFG.credentialSalt = null;
   credentialKey = null;
+  clearCachedSessionKey();
   saveConfig(CFG);
   toast("Credential encryption disabled");
   populateSecuritySection();
@@ -2961,6 +3139,9 @@ async function changeCredentialPassphrase(){
   }
   const p1 = prompt("New passphrase:");
   if(p1 === null || !p1){ toast("Cancelled"); return; }
+  if(isWeakPassphrase(p1) && !confirm("This passphrase is short and may be easy to guess. Use it anyway?")){
+    toast("Cancelled"); return;
+  }
   const p2 = prompt("Confirm new passphrase:");
   if(p1 !== p2){ toast("Passphrases didn't match"); return; }
   try{
@@ -2968,15 +3149,51 @@ async function changeCredentialPassphrase(){
     credentialKey = key;
     CFG.credentialSalt = saltB64;
     saveConfig(CFG);
+    await cacheKeyForSession(key);
     toast("Passphrase changed");
   }catch(e){
     toast("Could not change passphrase: " + (e && e.message));
   }
 }
+// Recovery path for a forgotten passphrase: without this, an account whose
+// credential fields are still encrypted blobs is permanently stuck (see
+// the guard in editAccount/editRlAccount) with no way back except manually
+// deleting and recreating the account. This wipes just the still-locked
+// credential fields (not the whole account) and turns encryption off, so
+// the affected accounts can have their credentials re-entered normally.
+async function resetCredentialEncryption(){
+  if(!confirm("Forgot your passphrase? This permanently erases the encrypted credentials for every affected account — you'll need to re-enter them manually afterward. This cannot be undone. Continue?")) return;
+  const allAccounts = [...(CFG.accounts||[]), ...(CFG.readItLaterAccounts||[])];
+  const affected = [];
+  for(const a of allAccounts){
+    const fields = CRED_FIELDS[a.type];
+    if(!fields) continue;
+    let touched = false;
+    for(const f of fields){
+      if(isEncryptedBlob(a[f])){ a[f] = ""; touched = true; }
+    }
+    if(touched) affected.push(a.name || a.type);
+  }
+  CFG.credentialsEncrypted = false;
+  CFG.credentialSalt = null;
+  credentialKey = null;
+  clearCachedSessionKey();
+  saveConfig(CFG);
+  populateSecuritySection();
+  renderAccountsList();
+  renderRlAccountsList();
+  toast(affected.length
+    ? `Reset. Re-enter credentials for: ${affected.join(", ")}`
+    : "Encryption reset", {duration: 8000});
+}
+
 function populateSecuritySection(){
+  const locked = CFG.credentialsEncrypted && !credentialKey;
   $("#cfg-encrypt-credentials").checked = !!CFG.credentialsEncrypted;
+  $("#cfg-stay-signed-in").checked = !!CFG.staySignedInSession;
   $("#btn-change-passphrase").classList.toggle("hidden", !CFG.credentialsEncrypted);
-  $("#btn-unlock-now").classList.toggle("hidden", !CFG.credentialsEncrypted || !!credentialKey);
+  $("#btn-unlock-now").classList.toggle("hidden", !locked);
+  $("#btn-reset-encryption").classList.toggle("hidden", !locked);
 }
 
 $("#cfg-encrypt-credentials").addEventListener("change", async (e)=>{
@@ -2990,6 +3207,13 @@ $("#btn-unlock-now").addEventListener("click", async ()=>{
   const ok = await unlockCredentials();
   if(ok){ toast("Unlocked"); populateSecuritySection(); }
 });
+$("#cfg-stay-signed-in").addEventListener("change", (e)=>{
+  CFG.staySignedInSession = e.target.checked;
+  saveConfig(CFG);
+  if(!CFG.staySignedInSession) clearCachedSessionKey();
+  else if(credentialKey) cacheKeyForSession(credentialKey);
+});
+$("#btn-reset-encryption").addEventListener("click", resetCredentialEncryption);
 
 function populateConfigForm(){
   renderAccountsList();
@@ -3002,6 +3226,7 @@ function populateConfigForm(){
   $("#cfg-light-bg").value = CFG.lightBg; $("#cfg-light-fg").value = CFG.lightFg;
   $("#cfg-dark-bg").value = CFG.darkBg; $("#cfg-dark-fg").value = CFG.darkFg;
 
+  $("#cfg-auto-sync-minutes").value = (CFG.autoSyncMinutes === undefined ? 15 : CFG.autoSyncMinutes);
   $("#cfg-never-fetch-images").checked = !!CFG.neverFetchImages;
   $("#cfg-density").value = CFG.density;
   $("#cfg-preview-lines").value = CFG.previewLines;
@@ -4070,6 +4295,9 @@ $("#btn-save-config").addEventListener("click", async ()=>{
   CFG.ffArtTitle = $("#cfg-ff-art-title").value;
   CFG.ffArtBody = $("#cfg-ff-art-body").value;
 
+  CFG.autoSyncMinutes = parseInt($("#cfg-auto-sync-minutes").value, 10);
+  if(isNaN(CFG.autoSyncMinutes)) CFG.autoSyncMinutes = 15;
+  scheduleAutoSync();
   CFG.neverFetchImages = $("#cfg-never-fetch-images").checked;
   CFG.density = $("#cfg-density").value;
   CFG.previewLines = parseInt($("#cfg-preview-lines").value, 10) || 3;
@@ -4276,6 +4504,35 @@ const mediaSyncLimiter = createLimiter(SYNC_CONCURRENCY);
 // re-render the feed list progressively. Each feed's work is individually
 // try/caught so one feed's failure can't reject the whole batch and leave a
 // caller's "Refreshing..." indicator stuck forever.
+// Tracks whether a feed's sync is actually healthy, separate from its
+// unread count — a feed that's been silently failing for weeks (wrong URL,
+// expired auth, whatever) previously had no visible indication anywhere
+// except digging through Settings -> Logging. consecutiveFailures resets
+// to 0 on any successful sync, so one transient blip doesn't flag a feed
+// as broken — only a genuine, sustained pattern does.
+async function recordFeedHealth(feedObj, success, errorMessage){
+  return tx("feedsCache","readwrite", store=>{
+    return new Promise((resolve, reject)=>{
+      const req = store.get(feedObj.id);
+      req.onsuccess = ()=>{
+        const rec = req.result || {id: feedObj.id, title: feedObj.title, unreadCount: 0};
+        if(success){
+          rec.lastSyncAt = Date.now();
+          rec.lastSyncError = null;
+          rec.consecutiveFailures = 0;
+        }else{
+          rec.lastSyncError = errorMessage || "Sync failed";
+          rec.consecutiveFailures = (rec.consecutiveFailures||0) + 1;
+        }
+        store.put(rec);
+        resolve();
+      };
+      req.onerror = ()=>reject(req.error);
+    });
+  });
+}
+const FEED_HEALTH_WARNING_THRESHOLD = 3;
+
 async function syncFeedList(feedList, onFeedDone){
   await processOutbox();
   let anyPurged = false;
@@ -4283,8 +4540,10 @@ async function syncFeedList(feedList, onFeedDone){
     let entries = [];
     try{
       entries = await syncFeed(f) || [];
+      await recordFeedHealth(f, true).catch(()=>{});
     }catch(e){
       debug(`syncFeed failed for feed=${f.id}: ${e && e.message}`);
+      await recordFeedHealth(f, false, e && e.message).catch(()=>{});
     }
     try{
       await refreshCounterForFeed(f);
@@ -4314,6 +4573,31 @@ async function syncFeedList(feedList, onFeedDone){
 async function syncAllFeeds(onFeedDone){
   return syncFeedList(CFG.selectedFeeds, onFeedDone);
 }
+
+let autoSyncTimer = null;
+let lastAutoSyncAt = 0;
+function scheduleAutoSync(){
+  clearTimeout(autoSyncTimer);
+  if(!CFG.autoSyncMinutes || CFG.autoSyncMinutes < 0) return;
+  autoSyncTimer = setTimeout(runAutoSyncIfDue, 60*1000);
+}
+async function runAutoSyncIfDue(){
+  scheduleAutoSync();
+  if(!CFG.autoSyncMinutes || CFG.autoSyncMinutes < 0) return;
+  if(document.visibilityState !== "visible") return; // foreground-only, by design — never syncs while backgrounded
+  if(!CFG.accounts || CFG.accounts.length === 0) return;
+  if(Date.now() < lastAutoSyncAt + CFG.autoSyncMinutes*60*1000) return;
+  lastAutoSyncAt = Date.now();
+  try{
+    await syncAllFeeds(()=>{ if(currentScreen === "screen-feeds") renderFeedList(); });
+    if(currentScreen === "screen-feeds") renderFeedList();
+    else if(currentScreen === "screen-articles") renderArticleList();
+  }catch(e){ debug(`Auto-sync failed: ${e && e.message}`); }
+}
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible") runAutoSyncIfDue();
+});
+
 // Long-press a folder header to sync just that folder's feeds, without
 // waiting on (or re-fetching) every other selected feed.
 async function syncFolder(folderName){
@@ -4375,7 +4659,9 @@ async function renderFeedList(){
   const cached = await idbGetAll("feedsCache");
   const byId = new Map(cached.map(c=>[c.id, c]));
   let rows = CFG.selectedFeeds.map(f=>({
-    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0, folderName:f.folderName||null, accountId:f.accountId
+    id:f.id, title:f.title, unread:(byId.get(f.id)||{}).unreadCount||0, folderName:f.folderName||null, accountId:f.accountId,
+    lastSyncError: (byId.get(f.id)||{}).lastSyncError || null,
+    consecutiveFailures: (byId.get(f.id)||{}).consecutiveFailures || 0
   }));
   rows = rows.filter(r=>{
     if(r.unread>0) return true;
@@ -4397,7 +4683,10 @@ async function renderFeedList(){
   });
   const renderRow = (r, target)=>{
     const div = document.createElement("div"); div.className = "feed-row";
-    div.innerHTML = `<span class="name">${escapeHtml(r.title)}</span><span class="badge mono-num">${r.unread}</span>`;
+    const warningHtml = r.consecutiveFailures >= FEED_HEALTH_WARNING_THRESHOLD
+      ? `<span class="feed-warning" title="${escapeAttr(`Hasn't synced successfully in ${r.consecutiveFailures} attempts: ${r.lastSyncError||"unknown error"}`)}">&#9888;</span>`
+      : "";
+    div.innerHTML = `${warningHtml}<span class="name">${escapeHtml(r.title)}</span><span class="badge mono-num">${r.unread}</span>`;
     div.addEventListener("click", ()=>openArticleList(r.id, r.title));
     (target||container).appendChild(div);
   };
@@ -4601,13 +4890,33 @@ async function bulkMarkAll(){
   const listLabel = currentFolderName ? `folder "${currentFolderName}"` : "this feed";
   if(!confirm(`Mark ${entries.length} article${entries.length!==1?"s":""} in ${listLabel} as ${targetStatus}?`)) return;
 
+  // Captured before mutating — matters specifically on the Starred tab,
+  // which filters by starred only, not status, so a bulk action there can
+  // mix previously-read and previously-unread articles in one batch.
+  const priorStatuses = entries.map(e => ({id: e.id, status: e.status}));
+  const undoBulkMark = async ()=>{
+    try{
+      const toRead = [], toUnread = [];
+      for(const {id, status} of priorStatuses){
+        const entry = entries.find(e=>e.id===id);
+        if(!entry) continue;
+        (status === "read" ? toRead : toUnread).push(entry);
+      }
+      if(toRead.length) await applyBulkStatus(toRead, "read");
+      if(toUnread.length) await applyBulkStatus(toUnread, "unread");
+      toast("Undone");
+      renderArticleList();
+    }catch(e){
+      toast("Could not undo: " + (e && e.message));
+    }
+  };
+
   try{
     const {localFailures} = await applyBulkStatus(entries, targetStatus);
-    if(localFailures > 0){
-      toast(`Marked ${entries.length - localFailures}/${entries.length} article${entries.length!==1?"s":""} as ${targetStatus} (${localFailures} failed locally)`);
-    }else{
-      toast(`Marked ${entries.length} article${entries.length!==1?"s":""} as ${targetStatus}`);
-    }
+    const msg = localFailures > 0
+      ? `Marked ${entries.length - localFailures}/${entries.length} article${entries.length!==1?"s":""} as ${targetStatus} (${localFailures} failed locally)`
+      : `Marked ${entries.length} article${entries.length!==1?"s":""} as ${targetStatus}`;
+    toast(msg, {actionLabel:"Undo", onAction:undoBulkMark});
   }catch(e){
     toast(`Could not mark articles as ${targetStatus}: ${e && e.message}`);
     debug(`bulkMarkAll failed: ${e && e.message}`);
@@ -4698,6 +5007,21 @@ function renderArticleRow(e){
       }
     });
   }
+  attachSwipeActions(row, {
+    onSwipeLeft: async ()=>{
+      const newStatus = e.status === "read" ? "unread" : "read";
+      await setEntryStatus(e, newStatus);
+      row.classList.toggle("read", newStatus === "read");
+      toast(newStatus === "read" ? "Marked read" : "Marked unread");
+    },
+    onSwipeRight: async ()=>{
+      const newStarred = !e.starred;
+      await setEntryStarred(e, newStarred);
+      const titleEl = row.querySelector(".title");
+      if(titleEl) titleEl.innerHTML = (newStarred ? '<span class="star-dot">❤️</span>' : "") + escapeHtml(e.title);
+      toast(newStarred ? "Starred" : "Unstarred");
+    }
+  });
   return row;
 }
 
@@ -4750,6 +5074,51 @@ async function renderArticleList(){
     renderNextArticleBatch();
   }
 }
+
+// Global search across every synced article's title and content — a plain
+// linear scan over IndexedDB, not an indexed/full-text search (IndexedDB
+// has no built-in text index, and building a real one is a bigger project
+// than this warrants right now). Debounced so it doesn't re-scan on every
+// keystroke, and capped at 200 results so a broad query on a large dataset
+// doesn't try to render an unbounded list. Reuses renderArticleRow(), so
+// results look and behave exactly like article list rows — including
+// swipe-to-mark — for free.
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_MAX_RESULTS = 200;
+let searchDebounceTimer = null;
+async function runSearch(){
+  const q = $("#search-input").value.trim().toLowerCase();
+  const container = $("#search-results");
+  container.innerHTML = "";
+  if(!q){ lastArticleOrder = []; return; }
+  const all = await idbGetAll("entries");
+  const matches = all
+    .filter(e => !e.purged && (
+      (e.title||"").toLowerCase().includes(q) ||
+      stripTags(e.content||"").toLowerCase().includes(q)
+    ))
+    .sort((a,b)=> new Date(b.publishedAt) - new Date(a.publishedAt))
+    .slice(0, SEARCH_MAX_RESULTS);
+  lastArticleOrder = matches.map(e=>e.id);
+  if(matches.length === 0){
+    container.innerHTML = '<div class="empty"><div class="big">No matches</div></div>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  matches.forEach(e=>frag.appendChild(renderArticleRow(e)));
+  container.appendChild(frag);
+}
+$("#search-input").addEventListener("input", ()=>{
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
+});
+$("#btn-search").addEventListener("click", ()=>{
+  navigate("screen-search", {title:"Search"});
+  $("#search-input").value = "";
+  $("#search-results").innerHTML = "";
+  setTimeout(()=>$("#search-input").focus(), 50);
+});
+
 // Simple concurrency-limited runner, used to cap how many thumbnail fetches
 // run at once when a feed has many articles (avoids firing dozens of
 // simultaneous network requests when opening a large unread list).
@@ -4895,33 +5264,44 @@ function nextArticle(){
   openArticle(lastArticleOrder[idx+1], {replace:true});
 }
 
-async function markRead(entry){
-  entry.status = "read";
-  await patchEntry(entry.id, rec=>{ rec.status = "read"; });
-  try {
+// Shared by markRead/markUnread/toggleStar below, and by the swipe-to-mark
+// gestures on article list rows — the local-write + remote-sync-with-
+// outbox-fallback pattern was independently duplicated three times before
+// this; adding a fourth caller (swipe) was the point where that stopped
+// being reasonable to keep copying.
+async function setEntryStatus(entry, status){
+  entry.status = status;
+  await patchEntry(entry.id, rec=>{ rec.status = status; });
+  try{
     const acc = CFG.accounts.find(a => a.id === entry.accountId);
-    if(acc) await apiMarkStatus(acc, [entry.rawId], "read", entry.rawFeedId);
-  } catch(e){ await enqueueOutbox({type:"mark-status", accountId: entry.accountId, rawIds:[entry.rawId], rawFeedId: entry.rawFeedId, status:"read"}); }
+    if(acc) await apiMarkStatus(acc, [entry.rawId], status, entry.rawFeedId);
+  }catch(e){
+    await enqueueOutbox({type:"mark-status", accountId: entry.accountId, rawIds:[entry.rawId], rawFeedId: entry.rawFeedId, status});
+  }
+}
+async function setEntryStarred(entry, starred){
+  entry.starred = starred;
+  await patchEntry(entry.id, rec=>{ rec.starred = starred; });
+  await setProtection(entry, starred);
+  try{
+    const acc = CFG.accounts.find(a => a.id === entry.accountId);
+    if(acc) await apiToggleBookmark(acc, entry.rawId, entry.rawFeedId, starred);
+  }catch(e){
+    await enqueueOutbox({type:"toggle-star", accountId: entry.accountId, rawId:entry.rawId, rawFeedId: entry.rawFeedId, isStarred:starred});
+  }
+}
+
+async function markRead(entry){
+  await setEntryStatus(entry, "read");
 }
 async function markUnread(){
   if(!currentEntry) return;
-  currentEntry.status = "unread";
-  await patchEntry(currentEntry.id, rec=>{ rec.status = "unread"; });
-  try {
-    const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
-    if(acc) await apiMarkStatus(acc, [currentEntry.rawId], "unread", currentEntry.rawFeedId);
-  } catch(e){ await enqueueOutbox({type:"mark-status", accountId: currentEntry.accountId, rawIds:[currentEntry.rawId], rawFeedId: currentEntry.rawFeedId, status:"unread"}); }
+  await setEntryStatus(currentEntry, "unread");
   toast("Marked unread");
 }
 async function toggleStar(){
   if(!currentEntry) return;
-  currentEntry.starred = !currentEntry.starred;
-  await patchEntry(currentEntry.id, rec=>{ rec.starred = currentEntry.starred; });
-  await setProtection(currentEntry, currentEntry.starred);
-  try{
-    const acc = CFG.accounts.find(a => a.id === currentEntry.accountId);
-    if(acc) await apiToggleBookmark(acc, currentEntry.rawId, currentEntry.rawFeedId, currentEntry.starred);
-  } catch(e){ await enqueueOutbox({type:"toggle-star", accountId: currentEntry.accountId, rawId:currentEntry.rawId, rawFeedId: currentEntry.rawFeedId, isStarred:currentEntry.starred}); }
+  await setEntryStarred(currentEntry, !currentEntry.starred);
   const starBtn = $("#top-actions button[aria-label='Star']");
   if(starBtn) starBtn.innerHTML = currentEntry.starred ? "❤️" : "🖤";
 }
@@ -5008,6 +5388,8 @@ async function init(){
   $("#art-sort-dir").textContent = artSort.dir==="asc" ? "\u{1F446}" : "\u{1F447}";
 
   setupServiceWorker();
+  lastAutoSyncAt = Date.now();
+  scheduleAutoSync();
 
   await unlockCredentials();
 
@@ -5071,6 +5453,9 @@ async function init(){
         lastArticleOrder = lastArticle.order;
       }
       await openArticle(lastArticle.entryId);
+      if(typeof lastArticle.scrollTop === "number" && lastArticle.scrollTop > 0){
+        requestAnimationFrame(()=>{ $("#screen-article").scrollTop = lastArticle.scrollTop; });
+      }
       refreshCounters();
       return;
     }
