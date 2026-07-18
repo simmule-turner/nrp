@@ -2,6 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!--
+  Content-Security-Policy — two real constraints worth stating plainly
+  rather than leaving implicit:
+
+  1. script-src and style-src both need 'unsafe-inline'. This is a single
+     hand-edited HTML file with no build step, so there's no way to
+     generate per-load nonces or keep content hashes in sync with every
+     edit — every script and every inline style="" attribute in this file
+     (there are many) would otherwise be blocked outright, breaking the
+     app entirely. This means the CSP does NOT meaningfully defend against
+     XSS specifically (an injected script element, if sanitizeHtml() ever
+     missed one, would be allowed to run same as the app's own code) —
+     its real value is the other directives below, which don't need
+     'unsafe-inline' and add genuine defense-in-depth beyond what the
+     sanitizer alone provides.
+  2. frame-ancestors is deliberately omitted — the CSP spec doesn't allow
+     it to take effect via a <meta> tag at all (silently ignored, not an
+     error), only via a real HTTP response header. If your hosting setup
+     lets you set custom headers, adding
+     "Content-Security-Policy: frame-ancestors 'self'" (or X-Frame-Options)
+     there would close that gap; it can't be done from inside the page.
+
+  img-src, connect-src, and media-src are intentionally wide open (*) —
+  feed images and API/proxy targets are inherently arbitrary, user-
+  configured servers, not a fixed list this app could restrict to.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob: data:; connect-src *; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self';">
 <script>
 // Applied here — before any of <body> exists, let alone paints — to avoid
 // a flash of the wrong toolbar position on load. Toggling this class later
@@ -869,7 +896,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.86"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.87"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -1550,7 +1577,14 @@ async function fetchWithTimeout(url, opts, timeoutMs){
     else callerSignal.addEventListener("abort", ()=>controller.abort(), {once:true});
   }
   try{
-    return await fetch(url, Object.assign({}, opts, {signal: controller.signal}));
+    // no-referrer by default for every fetch that goes through here — this
+    // used to be set individually at three call sites (image fetching,
+    // opaque-image caching, NewsBlur's original-story fetch) and silently
+    // absent at the other five (Miniflux/NewsBlur/Wallabag/Readeck API
+    // calls, local feed XML), leaking this origin via the Referer header
+    // to whichever of those a request happened to go to. Centralizing it
+    // here means every current and future caller gets it automatically.
+    return await fetch(url, Object.assign({referrerPolicy:"no-referrer"}, opts, {signal: controller.signal}));
   }catch(e){
     if(timedOut){
       const err = new Error(`request timed out after ${timeoutMs/1000}s`);
@@ -2718,7 +2752,33 @@ function sanitizeHtml(html){
       if(name==="style" || name==="align" || name==="valign") el.removeAttribute(attr.name);
     });
   });
-  doc.querySelectorAll("img").forEach(img=>{ img.removeAttribute("width"); img.removeAttribute("height"); });
+  // Tracking-pixel heuristic — RSS/Atom content commonly embeds a tiny
+  // (often literally 1x1) image purely so the publisher can detect that an
+  // article was opened. Two independent signals: the declared size (has to
+  // be checked here, before the width/height attributes below get
+  // stripped for every other image) and a small list of hosts that are
+  // almost exclusively used for exactly this kind of tracking in feed
+  // content specifically — not a general ad-blocklist, and not
+  // comprehensive; a determined publisher can still defeat both.
+  const TRACKER_HOST_PATTERNS = [
+    "google-analytics.com", "doubleclick.net", "googlesyndication.com",
+    "scorecardresearch.com", "quantserve.com",
+    "stats.wordpress.com", "pixel.wp.com",
+    "feedburner.google.com", "feedads.g.doubleclick.net",
+    "bat.bing.com"
+  ];
+  doc.querySelectorAll("img").forEach(img=>{
+    const w = parseInt(img.getAttribute("width"), 10);
+    const h = parseInt(img.getAttribute("height"), 10);
+    const tinyBySize = (!isNaN(w) && w<=2) || (!isNaN(h) && h<=2);
+    let trackerHost = false;
+    try{
+      const host = new URL(img.getAttribute("src")||"", location.href).hostname;
+      trackerHost = TRACKER_HOST_PATTERNS.some(p => host===p || host.endsWith("."+p));
+    }catch(e){ /* relative or malformed src — not enough signal either way, leave it */ }
+    if(tinyBySize || trackerHost){ img.remove(); return; }
+    img.removeAttribute("width"); img.removeAttribute("height");
+  });
   return doc.body.innerHTML;
 }
 
