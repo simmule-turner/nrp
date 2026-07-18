@@ -896,7 +896,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.87"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.88"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -3246,6 +3246,53 @@ async function changeCredentialPassphrase(){
 // deleting and recreating the account. This wipes just the still-locked
 // credential fields (not the whole account) and turns encryption off, so
 // the affected accounts can have their credentials re-entered normally.
+// For the JSON config import: if the imported file's own credentials were
+// encrypted at export time (see btn-export-cfg), this is what makes
+// import actually usable rather than leaving every restored account
+// permanently stuck as an unreadable blob. Uses the imported file's OWN
+// credentialSalt, not the live app's current one — necessary since a
+// restored backup may have been made under a different passphrase, or
+// before the passphrase was later changed.
+async function decryptImportedAccountsIfNeeded(parsedCfg){
+  if(!parsedCfg.credentialsEncrypted) return;
+  const allAccounts = [...(parsedCfg.accounts||[]), ...(parsedCfg.readItLaterAccounts||[])];
+  const hasEncryptedFields = allAccounts.some(a=>{
+    const fields = CRED_FIELDS[a.type];
+    return fields && fields.some(f=>isEncryptedBlob(a[f]));
+  });
+  if(!hasEncryptedFields) return;
+
+  for(let attempt=0; attempt<3; attempt++){
+    const passphrase = prompt(attempt===0
+      ? "This backup's credentials are encrypted. Enter the passphrase used when it was exported:"
+      : "Incorrect passphrase. Try again:");
+    if(passphrase === null){
+      toast("Import will proceed, but encrypted accounts stay locked until unlocked (Settings \u2192 Security)");
+      return;
+    }
+    try{
+      const {key} = await deriveKeyFromPassphrase(passphrase, parsedCfg.credentialSalt);
+      const testAccount = allAccounts.find(a=>{
+        const fields = CRED_FIELDS[a.type];
+        return fields && fields.some(f=>isEncryptedBlob(a[f]));
+      });
+      const fields = CRED_FIELDS[testAccount.type];
+      const f = fields.find(fld=>isEncryptedBlob(testAccount[fld]));
+      await decryptString(key, testAccount[f]); // throws on wrong passphrase, before we commit to it
+
+      for(const a of allAccounts) await decryptAccountCredentials(a, key);
+      // This becomes the live session's key going forward — saveConfig()
+      // will now correctly re-encrypt using this same key+salt on the
+      // very next save, since parsedCfg.credentialsEncrypted/Salt get
+      // carried into CFG unchanged right after this returns.
+      credentialKey = key;
+      await cacheKeyForSession(key);
+      return;
+    }catch(e){ /* wrong passphrase — loop and retry */ }
+  }
+  toast("Too many incorrect attempts \u2014 imported accounts stay locked until unlocked (Settings \u2192 Security)");
+}
+
 async function resetCredentialEncryption(){
   if(!confirm("Forgot your passphrase? This permanently erases the encrypted credentials for every affected account — you'll need to re-enter them manually afterward. This cannot be undone. Continue?")) return;
   const allAccounts = [...(CFG.accounts||[]), ...(CFG.readItLaterAccounts||[])];
@@ -4178,7 +4225,7 @@ $("#btn-clear-oversized").addEventListener("click", ()=>{
 });
 
 /* Import / Export Options */
-$("#btn-export-cfg").addEventListener("click", ()=>{
+$("#btn-export-cfg").addEventListener("click", async ()=>{
   const exportCfg = Object.assign({}, CFG);
   // feedSort/artSort/collapsedFolders live in their own separate
   // localStorage keys, not on CFG itself — bundled in here too (under a
@@ -4189,6 +4236,16 @@ $("#btn-export-cfg").addEventListener("click", ()=>{
   exportCfg.__feedSort = feedSort;
   exportCfg.__artSort = artSort;
   exportCfg.__collapsedFolders = [...collapsedFolders];
+  // If encryption is on and currently unlocked, CFG holds plaintext
+  // credentials in memory (by design — see the comment above CRED_FIELDS)
+  // and needs the same re-encryption saveConfig() applies before this
+  // leaves the app as a file. If it's on but currently locked, CFG.accounts
+  // already holds encrypted blobs untouched, so exporting as-is is already
+  // correct — nothing extra to do in that case.
+  if(CFG.credentialsEncrypted && credentialKey){
+    exportCfg.accounts = await Promise.all((CFG.accounts||[]).map(a=>encryptAccountCredentials(a, credentialKey)));
+    exportCfg.readItLaterAccounts = await Promise.all((CFG.readItLaterAccounts||[]).map(a=>encryptAccountCredentials(a, credentialKey)));
+  }
   const data = JSON.stringify(exportCfg, null, 2);
   const blob = new Blob([data], {type:"application/json"});
   const url = URL.createObjectURL(blob);
@@ -4202,7 +4259,7 @@ $("#file-import-cfg").addEventListener("change", e=>{
   e.target.value = ""; // allow re-selecting the same file consecutively
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = async e => {
     try{
       const parsed = JSON.parse(e.target.result);
 
@@ -4230,6 +4287,7 @@ $("#file-import-cfg").addEventListener("change", e=>{
       // plain strings preserved as-is through export/import, so
       // selectedFeeds' accountId references correctly resolve against the
       // accounts restored in this same import.
+      await decryptImportedAccountsIfNeeded(parsed);
       Object.assign(CFG, parsed);
       saveConfig(CFG);
       // Re-render in place instead of location.reload(): everything a
