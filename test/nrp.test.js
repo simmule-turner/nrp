@@ -44,12 +44,12 @@ const FUNCTIONS = [
   "selectEntriesToPurge",
   "bytesToBase64",
   "base64ToBytes",
-  "deriveKeyFromPassphrase",
+  "deriveKeyFromPassword",
   "encryptString",
   "decryptString",
   "encryptWholeConfig",
   "decryptWholeConfig",
-  "isWeakPassphrase"
+  "isWeakPassword"
 ];
 const CONSTANTS = ["PBKDF2_ITERATIONS"];
 
@@ -218,7 +218,7 @@ test("selectEntriesToPurge: empty candidate list always returns empty, regardles
 // any test coverage at the time — these tests close that gap specifically.
 
 test("encryption: round-trip returns the original plaintext", async () => {
-  const { key } = await lib.deriveKeyFromPassphrase("correct horse battery staple", null);
+  const { key } = await lib.deriveKeyFromPassword("correct horse battery staple", null);
   const blob = await lib.encryptString(key, "super-secret-api-token-123");
   assert.ok(blob.iv && blob.data, "encryptString should return an {iv, data} blob");
   const plaintext = await lib.decryptString(key, blob);
@@ -226,27 +226,27 @@ test("encryption: round-trip returns the original plaintext", async () => {
 });
 
 test("encryption: same salt + same passphrase derives the same key (can re-decrypt after 'reload')", async () => {
-  const first = await lib.deriveKeyFromPassphrase("my passphrase", null);
+  const first = await lib.deriveKeyFromPassword("my passphrase", null);
   const blob = await lib.encryptString(first.key, "hello");
   // Simulates unlocking again later: only the salt (non-secret, stored in
   // CFG) and the passphrase (never stored) are available — same as a real
   // app reload.
-  const second = await lib.deriveKeyFromPassphrase("my passphrase", first.saltB64);
+  const second = await lib.deriveKeyFromPassword("my passphrase", first.saltB64);
   const plaintext = await lib.decryptString(second.key, blob);
   assert.equal(plaintext, "hello");
 });
 
 test("encryption: wrong passphrase throws on decrypt rather than returning wrong plaintext", async () => {
-  const right = await lib.deriveKeyFromPassphrase("right passphrase", null);
+  const right = await lib.deriveKeyFromPassword("right passphrase", null);
   const blob = await lib.encryptString(right.key, "hello");
-  const wrong = await lib.deriveKeyFromPassphrase("wrong passphrase", right.saltB64);
+  const wrong = await lib.deriveKeyFromPassword("wrong passphrase", right.saltB64);
   await assert.rejects(() => lib.decryptString(wrong.key, blob));
 });
 
 test("encryption: two encryptions of the same plaintext never produce identical ciphertext", async () => {
   // Each encryption uses a fresh random IV — if this ever failed, it would
   // mean IV reuse, which breaks AES-GCM's security guarantees entirely.
-  const { key } = await lib.deriveKeyFromPassphrase("pw", null);
+  const { key } = await lib.deriveKeyFromPassword("pw", null);
   const a = await lib.encryptString(key, "same plaintext");
   const b = await lib.encryptString(key, "same plaintext");
   assert.notEqual(a.iv, b.iv);
@@ -254,7 +254,7 @@ test("encryption: two encryptions of the same plaintext never produce identical 
 });
 
 test("encryptWholeConfig/decryptWholeConfig: round-trips an arbitrary config object", async () => {
-  const { key, saltB64 } = await lib.deriveKeyFromPassphrase("app password", null);
+  const { key, saltB64 } = await lib.deriveKeyFromPassword("app password", null);
   const cfg = { accounts: [{ id: "a1", type: "miniflux", token: "secret-token" }], theme: "dark" };
   const wrapper = await lib.encryptWholeConfig(cfg, key, saltB64);
   assert.equal(wrapper.__locked, true);
@@ -264,20 +264,20 @@ test("encryptWholeConfig/decryptWholeConfig: round-trips an arbitrary config obj
 });
 
 test("encryptWholeConfig: wrong password fails to decrypt", async () => {
-  const right = await lib.deriveKeyFromPassphrase("right password", null);
+  const right = await lib.deriveKeyFromPassword("right password", null);
   const wrapper = await lib.encryptWholeConfig({ hello: "world" }, right.key, right.saltB64);
-  const wrong = await lib.deriveKeyFromPassphrase("wrong password", right.saltB64);
+  const wrong = await lib.deriveKeyFromPassword("wrong password", right.saltB64);
   await assert.rejects(() => lib.decryptWholeConfig(wrapper, wrong.key));
 });
 
-test("isWeakPassphrase: flags short or empty passwords, accepts longer ones", () => {
-  assert.equal(lib.isWeakPassphrase(""), true);
-  assert.equal(lib.isWeakPassphrase(null), true);
-  assert.equal(lib.isWeakPassphrase(undefined), true);
-  assert.equal(lib.isWeakPassphrase("short"), true);
-  assert.equal(lib.isWeakPassphrase("a".repeat(7)), true);
-  assert.equal(lib.isWeakPassphrase("a".repeat(8)), false);
-  assert.equal(lib.isWeakPassphrase("a reasonably long passphrase"), false);
+test("isWeakPassword: flags short or empty passwords, accepts longer ones", () => {
+  assert.equal(lib.isWeakPassword(""), true);
+  assert.equal(lib.isWeakPassword(null), true);
+  assert.equal(lib.isWeakPassword(undefined), true);
+  assert.equal(lib.isWeakPassword("short"), true);
+  assert.equal(lib.isWeakPassword("a".repeat(7)), true);
+  assert.equal(lib.isWeakPassword("a".repeat(8)), false);
+  assert.equal(lib.isWeakPassword("a reasonably long passphrase"), false);
 });
 
 test("base64 round-trip preserves arbitrary bytes", () => {
