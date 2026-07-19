@@ -242,6 +242,18 @@ try{
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
   html.toolbar-bottom .screen-context-label{ bottom:4.5em; }
+  .lock-overlay{
+    position:fixed; inset:0; z-index:99999; background:var(--bg);
+    display:flex; align-items:center; justify-content:center; padding:1.2em;
+  }
+  .lock-overlay.hidden{ display:none; }
+  .lock-panel{ max-width:420px; width:100%; }
+  .lock-panel h2{ margin:0 0 .4em; }
+  .lock-panel input[type=password], .lock-panel input[type=text]{ width:100%; margin-top:.6em; }
+  .lock-error{
+    color:var(--danger); font-size:13px; margin-top:.6em;
+  }
+  .lock-error.hidden{ display:none; }
 
   .bg-task-indicator{
     position:fixed; left:50%; bottom:3.6em; transform:translateX(-50%);
@@ -796,37 +808,34 @@ fieldset legend {
         <legend id="security-legend" class="collapsible"><button type="button" class="chevron" aria-label="Expand or collapse">&#x25BE;</button>Security</legend>
         <div id="security-body" class="collapsible-body">
         <div class="row between">
-          <label style="margin:0;">Encrypt stored credentials</label>
+          <label style="margin:0;">Password protect this app</label>
           <input id="cfg-encrypt-credentials" type="checkbox">
         </div>
         <p class="muted" style="font-size:11px; margin:.4em 0 0;">
-          Encrypts Miniflux API tokens and Wallabag/Readeck credentials with a passphrase you set.
-          Protects against casual exposure — e.g. someone reading an exported config file or
-          browser storage directly — but not against a compromised device, where JavaScript could
-          read the passphrase as you type it. Proxy header values (custom auth headers, if you use
-          them) aren't covered by this. Off by default. The passphrase itself is never stored — if
-          you forget it, the encrypted values themselves can't be recovered, but you can reset
-          encryption below and re-enter credentials for the affected accounts.
+          Requires a password to open NRP at all — the entire stored configuration (accounts,
+          credentials, feeds, settings) is encrypted as a single file, and nothing renders until
+          it's unlocked. Protects against another user of this device opening the tab and browsing
+          your feeds, and against casual exposure of an exported backup file. It does not protect
+          against a compromised device, where JavaScript could read the password as you type it.
+          Off by default. The password itself is never stored — if you forget it, there's no way
+          to recover what's encrypted; the lock screen's Reset option is the only way back in, and
+          it erases everything, not just the password.
         </p>
         <div class="row between" style="margin-top:.8em;">
           <label style="margin:0;">Stay unlocked for this browser session</label>
           <input id="cfg-stay-signed-in" type="checkbox">
         </div>
         <p class="muted" style="font-size:11px; margin:.4em 0 0;">
-          Without this, expect to be asked for your passphrase surprisingly often — mobile browsers
+          Without this, expect to be asked for your password surprisingly often — mobile browsers
           (Android especially) frequently reload backgrounded tabs, and each reload otherwise means
-          re-entering it. This caches the derived key in this tab's session storage (cleared when
+          unlocking again. This caches the derived key in this tab's session storage (cleared when
           the tab/browser fully closes, separately expires after an hour either way) rather than
-          the passphrase itself — a real convenience/security tradeoff, not a free lunch: anyone
-          with access to this tab's dev tools during that window could extract the cached key. On
-          by default.
+          the password itself — a real convenience/security tradeoff, not a free lunch: anyone with
+          access to this tab's dev tools during that window could extract the cached key. On by
+          default.
         </p>
         <div class="row wrap" style="margin-top:.8em; gap:.4em;">
-          <button type="button" id="btn-change-passphrase" class="grow hidden">Change passphrase</button>
-          <button type="button" id="btn-unlock-now" class="grow hidden">Unlock now</button>
-        </div>
-        <div class="row wrap" style="margin-top:.4em; gap:.4em;">
-          <button type="button" id="btn-reset-encryption" class="grow hidden danger">Forgot passphrase? Reset</button>
+          <button type="button" id="btn-change-passphrase" class="grow hidden">Change password</button>
         </div>
         </div>
       </fieldset>
@@ -877,6 +886,34 @@ fieldset legend {
     <div id="search-results"></div>
   </section>
 
+  <div id="lock-overlay" class="lock-overlay hidden">
+    <div id="lock-unlock-view" class="lock-panel">
+      <h2>NRP is locked</h2>
+      <p class="muted">Enter your password to continue.</p>
+      <input id="lock-password-input" type="password" placeholder="Password" autocomplete="current-password">
+      <div id="lock-error" class="lock-error hidden"></div>
+      <div class="row wrap" style="margin-top:1em; gap:.4em;">
+        <button type="button" id="btn-lock-clear">Clear</button>
+        <button type="button" id="btn-lock-reset" class="danger">Reset</button>
+        <button type="button" id="btn-lock-ok" class="primary grow">OK</button>
+      </div>
+    </div>
+    <div id="lock-reset-view" class="lock-panel hidden">
+      <h2>Reset NRP?</h2>
+      <p class="muted">
+        This permanently erases every account, every cached article, and every setting on this
+        device — everything, not just the password. There is no way to undo this. If you're only
+        trying to recover from a forgotten password and still have your feeds set up elsewhere
+        (e.g. on the Miniflux/NewsBlur server itself), this is the only way back into NRP itself.
+      </p>
+      <p class="muted">Type <strong>RESET</strong> below to confirm.</p>
+      <input id="lock-reset-confirm-input" type="text" placeholder="Type RESET" autocomplete="off">
+      <div class="row wrap" style="margin-top:1em; gap:.4em;">
+        <button type="button" id="btn-lock-reset-cancel" class="grow">Cancel</button>
+        <button type="button" id="btn-lock-reset-confirm" class="danger grow" disabled>Erase Everything</button>
+      </div>
+    </div>
+  </div>
   <div id="screen-context-label" class="screen-context-label hidden"></div>
   <div id="toast" class="toast"></div>
 
@@ -896,7 +933,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.88"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.90"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -925,7 +962,7 @@ const DEFAULT_CFG = {
   cacheSizeLimit:536870912, maxItemSizeMB:2,
   purgeReadAfterDays:30, maxEntriesPerFeed:-1, stubReapAfterDays:90,
   autoSyncMinutes:-1, showFeedNameInArticle:true,
-  credentialsEncrypted:false, credentialSalt:null, staySignedInSession:true,
+  passwordProtected:false, pwSalt:null, staySignedInSession:true,
   maxContentSizeMB:-1, maxImageSizeMB:8,
   folderMode:"none", folders:[],
   toolbarPlacement: "top",
@@ -937,27 +974,17 @@ const DEFAULT_CFG = {
   selectedFeeds:[] // [{id: accountId___feedId, accountId, title, folderName}]
 };
 
-/* ============================= CREDENTIAL ENCRYPTION (opt-in) ============================= */
-// Encrypts only the specific fields that actually hold secrets — not the
-// whole config blob. Everything else (names, URLs, preferences, folder
-// structure) stays plaintext. Encrypting the whole blob would mean every
-// single read anywhere in the app needs to go through an async decrypt,
-// which this app's synchronous "CFG is just an object in memory" design
-// doesn't support without a much larger rewrite than this feature warrants.
-// NOT currently covered: proxy header values (custom auth headers some
-// users configure manually) — a known, documented gap, not an oversight.
-//
-// The live, in-memory CFG object always holds plaintext for these fields
-// during a session, exactly as it did before this feature existed — every
-// existing call site that reads account.token/.password/.apiToken/etc.
-// needs zero changes. Encryption only happens at the localStorage read/
-// write boundary: saveConfig() encrypts on the way out, unlockCredentials()
-// (called early in init()) decrypts in place on the way in.
-const CRED_FIELDS = {
-  miniflux: ["token"],
-  wallabag: ["clientSecret", "password"],
-  readeck: ["apiToken"]
-};
+/* ============================= PASSWORD PROTECTION (opt-in) ============================= */
+// Encrypts the entire stored config as one blob, gated behind a lock
+// screen that blocks the whole app until unlocked — not field-level
+// encryption of just credentials. That's a deliberate change from an
+// earlier version of this feature: field-level encryption meant keeping
+// track of exactly which fields on which account types needed it, which
+// left real gaps when a field got missed (proxy headers were one). Whole-
+// file encryption has no such list to get wrong — everything is protected
+// uniformly, and the tradeoff that used to matter (the whole app blocked
+// until unlock) is no longer a cost, since blocking the whole app until
+// unlock is the actual point of a password-protection feature.
 const PBKDF2_ITERATIONS = 100000;
 let credentialKey = null; // derived AES-GCM CryptoKey, cached in memory for the session once unlocked
 
@@ -976,45 +1003,46 @@ async function deriveKeyFromPassphrase(passphrase, saltB64){
 async function encryptString(key, plaintext){
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, new TextEncoder().encode(plaintext));
-  return {__enc:true, iv:bytesToBase64(iv), data:bytesToBase64(new Uint8Array(ciphertext))};
+  return {iv:bytesToBase64(iv), data:bytesToBase64(new Uint8Array(ciphertext))};
 }
 async function decryptString(key, blob){
-  // AES-GCM is authenticated — a wrong key throws here rather than silently
-  // producing wrong plaintext, which is what lets unlockCredentials() below
-  // actually detect an incorrect passphrase instead of just guessing.
+  // AES-GCM is authenticated — a wrong key throws here rather than
+  // silently producing wrong plaintext, which is what lets the lock
+  // screen actually detect an incorrect password instead of just guessing.
   const plainBuf = await crypto.subtle.decrypt(
     {name:"AES-GCM", iv:base64ToBytes(blob.iv)}, key, base64ToBytes(blob.data)
   );
   return new TextDecoder().decode(plainBuf);
 }
-function isEncryptedBlob(v){ return v && typeof v === "object" && v.__enc === true; }
 
-async function encryptAccountCredentials(account, key){
-  const fields = CRED_FIELDS[account.type];
-  if(!fields) return account;
-  const clone = Object.assign({}, account);
-  for(const f of fields){
-    if(clone[f] && typeof clone[f] === "string") clone[f] = await encryptString(key, clone[f]);
-  }
-  return clone;
+// Encrypts an entire config object into the on-disk wrapper shape. The
+// salt lives OUTSIDE the encrypted payload (as a sibling field, not
+// encrypted) — it has to be readable before decryption even starts, since
+// it's what the lock screen uses to derive the candidate key from a typed
+// password in the first place.
+async function encryptWholeConfig(cfg, key, saltB64){
+  const plaintext = JSON.stringify(cfg);
+  const {iv, data} = await encryptString(key, plaintext);
+  return {__locked:true, salt:saltB64, iv, data};
 }
-async function decryptAccountCredentials(account, key){
-  const fields = CRED_FIELDS[account.type];
-  if(!fields) return account;
-  for(const f of fields){
-    if(isEncryptedBlob(account[f])){
-      try{ account[f] = await decryptString(key, account[f]); }
-      catch(e){ debug(`Failed to decrypt ${f} for account "${account.name}": ${e && e.message}`); }
-    }
-  }
-  return account;
+async function decryptWholeConfig(wrapper, key){
+  const plaintext = await decryptString(key, wrapper);
+  return JSON.parse(plaintext);
 }
+function isWeakPassphrase(p){ return !p || p.length < 8; }
 
 function loadConfig(){
   try{
     const raw = localStorage.getItem(CFG_KEY);
     if(!raw) return Object.assign({}, DEFAULT_CFG);
     let parsed = JSON.parse(raw);
+
+    // Password-protected — the stored value is one encrypted blob, not a
+    // real config. Return it as-is; none of the migration logic below can
+    // apply to something that hasn't been decrypted yet. init() checks for
+    // CFG.__locked and shows the lock screen instead of proceeding — see
+    // unlockApp()/completeInit() further down.
+    if(parsed.__locked === true) return parsed;
 
     // Migration for older clients relying on single bg/fg
     if(parsed.bgColor && !parsed.lightBg) {
@@ -1079,7 +1107,7 @@ function loadConfig(){
 }
 let saveConfigQueue = Promise.resolve();
 function saveConfig(cfg){
-  if(cfg.credentialsEncrypted && credentialKey){
+  if(cfg.passwordProtected && credentialKey){
     // Serialized rather than independently fire-and-forget: without this,
     // two saveConfig() calls in quick succession could have their async
     // encryption passes finish in the wrong order, and the slower (older)
@@ -1087,10 +1115,8 @@ function saveConfig(cfg){
     const key = credentialKey;
     saveConfigQueue = saveConfigQueue.then(async ()=>{
       try{
-        const clone = Object.assign({}, cfg);
-        clone.accounts = await Promise.all((cfg.accounts||[]).map(a=>encryptAccountCredentials(a, key)));
-        clone.readItLaterAccounts = await Promise.all((cfg.readItLaterAccounts||[]).map(a=>encryptAccountCredentials(a, key)));
-        localStorage.setItem(CFG_KEY, JSON.stringify(clone));
+        const wrapper = await encryptWholeConfig(cfg, key, cfg.pwSalt);
+        localStorage.setItem(CFG_KEY, JSON.stringify(wrapper));
       }catch(e){
         debug(`Encrypted saveConfig failed: ${e && e.message}`);
       }
@@ -3110,7 +3136,6 @@ async function cacheKeyForSession(key){
   }catch(e){ /* non-fatal — just means the next load prompts again */ }
 }
 async function loadCachedSessionKey(){
-  if(!CFG.staySignedInSession) return null;
   try{
     const raw = sessionStorage.getItem(SESSION_KEY_STORAGE);
     if(!raw) return null;
@@ -3123,229 +3148,80 @@ function clearCachedSessionKey(){
   try{ sessionStorage.removeItem(SESSION_KEY_STORAGE); }catch(e){}
 }
 
-async function unlockCredentials(){
-  if(!CFG.credentialsEncrypted) return true;
-  const allAccounts = [...(CFG.accounts||[]), ...(CFG.readItLaterAccounts||[])];
-
-  // Try the session-cached key first — if it works, no prompt needed at
-  // all. Verified the same way a freshly-entered passphrase is (attempt a
-  // real decrypt), so a corrupted or tampered cache entry can't silently
-  // "unlock" with wrong data.
-  const cachedKey = await loadCachedSessionKey();
-  if(cachedKey){
-    try{
-      const testAccount = allAccounts.find(a=>{
-        const fields = CRED_FIELDS[a.type];
-        return fields && fields.some(f=>isEncryptedBlob(a[f]));
-      });
-      if(testAccount){
-        const fields = CRED_FIELDS[testAccount.type];
-        const f = fields.find(f=>isEncryptedBlob(testAccount[f]));
-        await decryptString(cachedKey, testAccount[f]);
-      }
-      credentialKey = cachedKey;
-      for(const a of allAccounts) await decryptAccountCredentials(a, cachedKey);
-      return true;
-    }catch(e){ clearCachedSessionKey(); /* fall through to prompting */ }
-  }
-
-  for(let attempt=0; attempt<3; attempt++){
-    const passphrase = prompt(attempt===0
-      ? "Enter your credentials passphrase to unlock NRP:"
-      : "Incorrect passphrase. Try again:");
-    if(passphrase === null){
-      toast("Locked \u2014 accounts needing credentials won't sync until unlocked (Settings \u2192 Security)");
-      return false;
-    }
-    try{
-      const {key} = await deriveKeyFromPassphrase(passphrase, CFG.credentialSalt);
-      const testAccount = allAccounts.find(a=>{
-        const fields = CRED_FIELDS[a.type];
-        return fields && fields.some(f=>isEncryptedBlob(a[f]));
-      });
-      if(testAccount){
-        const fields = CRED_FIELDS[testAccount.type];
-        const f = fields.find(f=>isEncryptedBlob(testAccount[f]));
-        await decryptString(key, testAccount[f]); // throws on wrong passphrase before we commit to it
-      }
-      credentialKey = key;
-      for(const a of allAccounts) await decryptAccountCredentials(a, key);
-      await cacheKeyForSession(key);
-      return true;
-    }catch(e){ /* wrong passphrase — loop and retry */ }
-  }
-  toast("Too many incorrect attempts \u2014 locked (Settings \u2192 Security to try again)");
-  return false;
-}
-
-function isWeakPassphrase(p){ return !p || p.length < 8; }
-
-async function enableCredentialEncryption(){
-  const p1 = prompt("Set a passphrase to encrypt stored credentials:");
+async function enablePasswordProtection(){
+  const p1 = prompt("Set a password to protect this app:");
   if(p1 === null || !p1){ toast("Cancelled"); return; }
-  if(isWeakPassphrase(p1) && !confirm("This passphrase is short and may be easy to guess. Use it anyway?")){
+  if(isWeakPassphrase(p1) && !confirm("This password is short and may be easy to guess. Use it anyway?")){
     toast("Cancelled"); return;
   }
-  const p2 = prompt("Confirm passphrase:");
-  if(p1 !== p2){ toast("Passphrases didn't match"); return; }
+  const p2 = prompt("Confirm password:");
+  if(p1 !== p2){ toast("Passwords didn't match"); return; }
   try{
     const {key, saltB64} = await deriveKeyFromPassphrase(p1, null);
     credentialKey = key;
-    CFG.credentialSalt = saltB64;
-    CFG.credentialsEncrypted = true;
+    CFG.pwSalt = saltB64;
+    CFG.passwordProtected = true;
     saveConfig(CFG);
     await cacheKeyForSession(key);
-    toast("Credential encryption enabled");
+    toast("Password protection enabled");
   }catch(e){
-    toast("Could not enable encryption: " + (e && e.message));
+    toast("Could not enable password protection: " + (e && e.message));
   }
   populateSecuritySection();
 }
-async function disableCredentialEncryption(){
-  if(!credentialKey){
-    const unlocked = await unlockCredentials();
-    if(!unlocked){ populateSecuritySection(); return; }
-  }
-  if(!confirm("Disable credential encryption? Stored tokens/passwords will be saved in plain text again.")){
-    populateSecuritySection(); return;
-  }
-  CFG.credentialsEncrypted = false;
-  CFG.credentialSalt = null;
+function disablePasswordProtection(){
+  // Reachable only from Settings, which is itself only reachable already
+  // unlocked (the lock screen gates the entire app) — so there's no
+  // "unlock first" step needed here the way the old field-level version
+  // required; credentialKey is already set by the time this can run.
+  if(!confirm("Disable password protection? NRP will no longer require a password to open.")) return;
+  CFG.passwordProtected = false;
+  CFG.pwSalt = null;
   credentialKey = null;
   clearCachedSessionKey();
   saveConfig(CFG);
-  toast("Credential encryption disabled");
+  toast("Password protection disabled");
   populateSecuritySection();
 }
-async function changeCredentialPassphrase(){
-  if(!credentialKey){
-    const unlocked = await unlockCredentials();
-    if(!unlocked) return;
-  }
-  const p1 = prompt("New passphrase:");
+async function changeAppPassword(){
+  const p1 = prompt("New password:");
   if(p1 === null || !p1){ toast("Cancelled"); return; }
-  if(isWeakPassphrase(p1) && !confirm("This passphrase is short and may be easy to guess. Use it anyway?")){
+  if(isWeakPassphrase(p1) && !confirm("This password is short and may be easy to guess. Use it anyway?")){
     toast("Cancelled"); return;
   }
-  const p2 = prompt("Confirm new passphrase:");
-  if(p1 !== p2){ toast("Passphrases didn't match"); return; }
+  const p2 = prompt("Confirm new password:");
+  if(p1 !== p2){ toast("Passwords didn't match"); return; }
   try{
     const {key, saltB64} = await deriveKeyFromPassphrase(p1, null);
     credentialKey = key;
-    CFG.credentialSalt = saltB64;
+    CFG.pwSalt = saltB64;
     saveConfig(CFG);
     await cacheKeyForSession(key);
-    toast("Passphrase changed");
+    toast("Password changed");
   }catch(e){
-    toast("Could not change passphrase: " + (e && e.message));
+    toast("Could not change password: " + (e && e.message));
   }
-}
-// Recovery path for a forgotten passphrase: without this, an account whose
-// credential fields are still encrypted blobs is permanently stuck (see
-// the guard in editAccount/editRlAccount) with no way back except manually
-// deleting and recreating the account. This wipes just the still-locked
-// credential fields (not the whole account) and turns encryption off, so
-// the affected accounts can have their credentials re-entered normally.
-// For the JSON config import: if the imported file's own credentials were
-// encrypted at export time (see btn-export-cfg), this is what makes
-// import actually usable rather than leaving every restored account
-// permanently stuck as an unreadable blob. Uses the imported file's OWN
-// credentialSalt, not the live app's current one — necessary since a
-// restored backup may have been made under a different passphrase, or
-// before the passphrase was later changed.
-async function decryptImportedAccountsIfNeeded(parsedCfg){
-  if(!parsedCfg.credentialsEncrypted) return;
-  const allAccounts = [...(parsedCfg.accounts||[]), ...(parsedCfg.readItLaterAccounts||[])];
-  const hasEncryptedFields = allAccounts.some(a=>{
-    const fields = CRED_FIELDS[a.type];
-    return fields && fields.some(f=>isEncryptedBlob(a[f]));
-  });
-  if(!hasEncryptedFields) return;
-
-  for(let attempt=0; attempt<3; attempt++){
-    const passphrase = prompt(attempt===0
-      ? "This backup's credentials are encrypted. Enter the passphrase used when it was exported:"
-      : "Incorrect passphrase. Try again:");
-    if(passphrase === null){
-      toast("Import will proceed, but encrypted accounts stay locked until unlocked (Settings \u2192 Security)");
-      return;
-    }
-    try{
-      const {key} = await deriveKeyFromPassphrase(passphrase, parsedCfg.credentialSalt);
-      const testAccount = allAccounts.find(a=>{
-        const fields = CRED_FIELDS[a.type];
-        return fields && fields.some(f=>isEncryptedBlob(a[f]));
-      });
-      const fields = CRED_FIELDS[testAccount.type];
-      const f = fields.find(fld=>isEncryptedBlob(testAccount[fld]));
-      await decryptString(key, testAccount[f]); // throws on wrong passphrase, before we commit to it
-
-      for(const a of allAccounts) await decryptAccountCredentials(a, key);
-      // This becomes the live session's key going forward — saveConfig()
-      // will now correctly re-encrypt using this same key+salt on the
-      // very next save, since parsedCfg.credentialsEncrypted/Salt get
-      // carried into CFG unchanged right after this returns.
-      credentialKey = key;
-      await cacheKeyForSession(key);
-      return;
-    }catch(e){ /* wrong passphrase — loop and retry */ }
-  }
-  toast("Too many incorrect attempts \u2014 imported accounts stay locked until unlocked (Settings \u2192 Security)");
-}
-
-async function resetCredentialEncryption(){
-  if(!confirm("Forgot your passphrase? This permanently erases the encrypted credentials for every affected account — you'll need to re-enter them manually afterward. This cannot be undone. Continue?")) return;
-  const allAccounts = [...(CFG.accounts||[]), ...(CFG.readItLaterAccounts||[])];
-  const affected = [];
-  for(const a of allAccounts){
-    const fields = CRED_FIELDS[a.type];
-    if(!fields) continue;
-    let touched = false;
-    for(const f of fields){
-      if(isEncryptedBlob(a[f])){ a[f] = ""; touched = true; }
-    }
-    if(touched) affected.push(a.name || a.type);
-  }
-  CFG.credentialsEncrypted = false;
-  CFG.credentialSalt = null;
-  credentialKey = null;
-  clearCachedSessionKey();
-  saveConfig(CFG);
-  populateSecuritySection();
-  renderAccountsList();
-  renderRlAccountsList();
-  toast(affected.length
-    ? `Reset. Re-enter credentials for: ${affected.join(", ")}`
-    : "Encryption reset", {duration: 8000});
 }
 
 function populateSecuritySection(){
-  const locked = CFG.credentialsEncrypted && !credentialKey;
-  $("#cfg-encrypt-credentials").checked = !!CFG.credentialsEncrypted;
+  $("#cfg-encrypt-credentials").checked = !!CFG.passwordProtected;
   $("#cfg-stay-signed-in").checked = !!CFG.staySignedInSession;
-  $("#btn-change-passphrase").classList.toggle("hidden", !CFG.credentialsEncrypted);
-  $("#btn-unlock-now").classList.toggle("hidden", !locked);
-  $("#btn-reset-encryption").classList.toggle("hidden", !locked);
+  $("#btn-change-passphrase").classList.toggle("hidden", !CFG.passwordProtected);
 }
 
 $("#cfg-encrypt-credentials").addEventListener("change", async (e)=>{
-  const wantsEncryption = e.target.checked;
-  e.target.checked = !!CFG.credentialsEncrypted; // revert visually until the async flow actually confirms
-  if(wantsEncryption) await enableCredentialEncryption();
-  else await disableCredentialEncryption();
+  const wantsProtection = e.target.checked;
+  e.target.checked = !!CFG.passwordProtected; // revert visually until the async flow actually confirms
+  if(wantsProtection) await enablePasswordProtection();
+  else disablePasswordProtection();
 });
-$("#btn-change-passphrase").addEventListener("click", changeCredentialPassphrase);
-$("#btn-unlock-now").addEventListener("click", async ()=>{
-  const ok = await unlockCredentials();
-  if(ok){ toast("Unlocked"); populateSecuritySection(); }
-});
+$("#btn-change-passphrase").addEventListener("click", changeAppPassword);
 $("#cfg-stay-signed-in").addEventListener("change", (e)=>{
   CFG.staySignedInSession = e.target.checked;
   saveConfig(CFG);
   if(!CFG.staySignedInSession) clearCachedSessionKey();
   else if(credentialKey) cacheKeyForSession(credentialKey);
 });
-$("#btn-reset-encryption").addEventListener("click", resetCredentialEncryption);
 
 function populateConfigForm(){
   renderAccountsList();
@@ -3587,10 +3463,6 @@ $("#btn-save-account").addEventListener("click", async () => {
 window.editAccount = (id) => {
   const acc = CFG.accounts.find(a => a.id === id);
   if(!acc) return;
-  if(isEncryptedBlob(acc.token)){
-    toast("Unlock credentials first (Settings \u2192 Security) to edit this account");
-    return;
-  }
   $("#acc-form-id").value = acc.id;
   $("#acc-type").value = acc.type;
   $("#acc-name").value = acc.name;
@@ -3726,11 +3598,6 @@ $("#btn-save-rl-account").addEventListener("click", () => {
 window.editRlAccount = (id) => {
   const acc = (CFG.readItLaterAccounts||[]).find(a => a.id === id);
   if(!acc) return;
-  const fields = CRED_FIELDS[acc.type] || [];
-  if(fields.some(f=>isEncryptedBlob(acc[f]))){
-    toast("Unlock credentials first (Settings \u2192 Security) to edit this account");
-    return;
-  }
   $("#rl-form-id").value = acc.id;
   $("#rl-type").value = acc.type;
   $("#rl-name").value = acc.name;
@@ -4236,23 +4103,42 @@ $("#btn-export-cfg").addEventListener("click", async ()=>{
   exportCfg.__feedSort = feedSort;
   exportCfg.__artSort = artSort;
   exportCfg.__collapsedFolders = [...collapsedFolders];
-  // If encryption is on and currently unlocked, CFG holds plaintext
-  // credentials in memory (by design — see the comment above CRED_FIELDS)
-  // and needs the same re-encryption saveConfig() applies before this
-  // leaves the app as a file. If it's on but currently locked, CFG.accounts
-  // already holds encrypted blobs untouched, so exporting as-is is already
-  // correct — nothing extra to do in that case.
-  if(CFG.credentialsEncrypted && credentialKey){
-    exportCfg.accounts = await Promise.all((CFG.accounts||[]).map(a=>encryptAccountCredentials(a, credentialKey)));
-    exportCfg.readItLaterAccounts = await Promise.all((CFG.readItLaterAccounts||[]).map(a=>encryptAccountCredentials(a, credentialKey)));
+  // Settings (where this button lives) is only reachable already unlocked
+  // — the lock screen gates the whole app, not just this — so if password
+  // protection is on, credentialKey is always available here.
+  let data;
+  if(CFG.passwordProtected && credentialKey){
+    const wrapper = await encryptWholeConfig(exportCfg, credentialKey, CFG.pwSalt);
+    data = JSON.stringify(wrapper, null, 2);
+  }else{
+    data = JSON.stringify(exportCfg, null, 2);
   }
-  const data = JSON.stringify(exportCfg, null, 2);
   const blob = new Blob([data], {type:"application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = "nrp-config.json"; a.click();
   URL.revokeObjectURL(url);
 });
+// For importing a password-protected backup: the whole file is one
+// encrypted blob, so unlike the old field-level design there's no partial
+// success possible here — either the password is right and the whole
+// thing decrypts, or the import doesn't proceed at all. Uses the file's
+// OWN salt, not the live app's current one, since the backup may have
+// been made under a different or since-changed password.
+async function decryptImportedConfigIfPossible(wrapper){
+  for(let attempt=0; attempt<3; attempt++){
+    const password = prompt(attempt===0
+      ? "This backup is password-protected. Enter the password used when it was exported:"
+      : "Incorrect password. Try again:");
+    if(password === null){ toast("Import cancelled"); return null; }
+    try{
+      const {key} = await deriveKeyFromPassphrase(password, wrapper.salt);
+      return await decryptWholeConfig(wrapper, key);
+    }catch(e){ /* wrong password — loop and retry */ }
+  }
+  toast("Too many incorrect attempts \u2014 import cancelled");
+  return null;
+}
 $("#btn-import-cfg").addEventListener("click", ()=> $("#file-import-cfg").click());
 $("#file-import-cfg").addEventListener("change", e=>{
   const file = e.target.files[0];
@@ -4261,7 +4147,13 @@ $("#file-import-cfg").addEventListener("change", e=>{
   const reader = new FileReader();
   reader.onload = async e => {
     try{
-      const parsed = JSON.parse(e.target.result);
+      let parsed = JSON.parse(e.target.result);
+
+      if(parsed.__locked === true){
+        const decrypted = await decryptImportedConfigIfPossible(parsed);
+        if(!decrypted) return; // cancelled or failed all attempts — nothing to import
+        parsed = decrypted;
+      }
 
       // Bundled preferences from a newer export (see btn-export-cfg above).
       // Older export files simply won't have these — nothing to restore,
@@ -4287,7 +4179,6 @@ $("#file-import-cfg").addEventListener("change", e=>{
       // plain strings preserved as-is through export/import, so
       // selectedFeeds' accountId references correctly resolve against the
       // accounts restored in this same import.
-      await decryptImportedAccountsIfNeeded(parsed);
       Object.assign(CFG, parsed);
       saveConfig(CFG);
       // Re-render in place instead of location.reload(): everything a
@@ -5549,8 +5440,90 @@ function setupServiceWorker(){
 }
 
 /* ============================= STARTUP ============================= */
-async function init(){
-  await openDb();
+// Tries the session-cached key first (if "stay unlocked" was on and this
+// tab still has it) — if that works, no lock screen is ever shown at all.
+// Otherwise shows it and returns false; the lock screen's own success path
+// (attemptUnlock below) is what calls completeInit() to actually finish
+// starting the app.
+async function checkLockState(){
+  if(!CFG.__locked) return true;
+  const cachedKey = await loadCachedSessionKey();
+  if(cachedKey){
+    try{
+      const decrypted = await decryptWholeConfig(CFG, cachedKey);
+      CFG = Object.assign({}, DEFAULT_CFG, decrypted);
+      credentialKey = cachedKey;
+      return true;
+    }catch(e){ clearCachedSessionKey(); /* fall through to showing the lock screen */ }
+  }
+  showLockScreen();
+  return false;
+}
+
+function showLockScreen(){
+  $("#lock-overlay").classList.remove("hidden");
+  $("#lock-unlock-view").classList.remove("hidden");
+  $("#lock-reset-view").classList.add("hidden");
+  $("#lock-error").classList.add("hidden");
+  $("#lock-password-input").value = "";
+  setTimeout(()=>$("#lock-password-input").focus(), 50);
+}
+function hideLockScreen(){
+  $("#lock-overlay").classList.add("hidden");
+}
+
+async function attemptUnlock(){
+  const password = $("#lock-password-input").value;
+  const errEl = $("#lock-error");
+  errEl.classList.add("hidden");
+  if(!password) return;
+  try{
+    const {key} = await deriveKeyFromPassphrase(password, CFG.salt);
+    const decrypted = await decryptWholeConfig(CFG, key);
+    CFG = Object.assign({}, DEFAULT_CFG, decrypted);
+    credentialKey = key;
+    await cacheKeyForSession(key);
+    hideLockScreen();
+    await completeInit();
+  }catch(e){
+    errEl.textContent = "Incorrect password";
+    errEl.classList.remove("hidden");
+    $("#lock-password-input").value = "";
+    $("#lock-password-input").focus();
+  }
+}
+$("#btn-lock-ok").addEventListener("click", attemptUnlock);
+$("#lock-password-input").addEventListener("keydown", e=>{ if(e.key==="Enter") attemptUnlock(); });
+$("#btn-lock-clear").addEventListener("click", ()=>{
+  $("#lock-password-input").value = "";
+  $("#lock-error").classList.add("hidden");
+  $("#lock-password-input").focus();
+});
+
+$("#btn-lock-reset").addEventListener("click", ()=>{
+  $("#lock-unlock-view").classList.add("hidden");
+  $("#lock-reset-view").classList.remove("hidden");
+  $("#lock-reset-confirm-input").value = "";
+  $("#btn-lock-reset-confirm").disabled = true;
+  setTimeout(()=>$("#lock-reset-confirm-input").focus(), 50);
+});
+$("#btn-lock-reset-cancel").addEventListener("click", ()=>{
+  $("#lock-reset-view").classList.add("hidden");
+  $("#lock-unlock-view").classList.remove("hidden");
+  $("#lock-password-input").focus();
+});
+$("#lock-reset-confirm-input").addEventListener("input", (e)=>{
+  $("#btn-lock-reset-confirm").disabled = (e.target.value !== "RESET");
+});
+$("#btn-lock-reset-confirm").addEventListener("click", async ()=>{
+  if($("#lock-reset-confirm-input").value !== "RESET") return;
+  try{ await clearAllCachedData(); }catch(e){ /* proceed with the localStorage wipe regardless */ }
+  localStorage.clear();
+  try{ sessionStorage.clear(); }catch(e){}
+  location.reload();
+});
+
+async function completeInit(){
   applyTheme(); setupManifest(); populateConfigForm();
 
   $("#feed-sort-field").value = feedSort.field;
@@ -5561,8 +5534,6 @@ async function init(){
   setupServiceWorker();
   lastAutoSyncAt = Date.now();
   scheduleAutoSync();
-
-  await unlockCredentials();
 
   if(!CFG.accounts || CFG.accounts.length === 0){
     navigate("screen-config", {title:"Settings"});
@@ -5647,6 +5618,13 @@ async function init(){
     await goToFeedList();
   }
   refreshCounters();
+}
+
+async function init(){
+  await openDb();
+  const unlocked = await checkLockState();
+  if(!unlocked) return; // lock screen is showing; its own success path calls completeInit()
+  await completeInit();
 }
 init();
 
