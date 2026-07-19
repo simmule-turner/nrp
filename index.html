@@ -933,7 +933,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.90"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.91"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -1038,69 +1038,10 @@ function loadConfig(){
     let parsed = JSON.parse(raw);
 
     // Password-protected — the stored value is one encrypted blob, not a
-    // real config. Return it as-is; none of the migration logic below can
-    // apply to something that hasn't been decrypted yet. init() checks for
-    // CFG.__locked and shows the lock screen instead of proceeding — see
-    // unlockApp()/completeInit() further down.
+    // real config. Return it as-is; init() checks for CFG.__locked and
+    // shows the lock screen instead of proceeding — see
+    // checkLockState()/completeInit() further down.
     if(parsed.__locked === true) return parsed;
-
-    // Migration for older clients relying on single bg/fg
-    if(parsed.bgColor && !parsed.lightBg) {
-      parsed.lightBg = parsed.bgColor;
-      parsed.lightFg = parsed.fgColor;
-    }
-
-    // Migration for moving from hardcoded miniflux to accounts array
-    if(parsed.minifluxUrl && (!parsed.accounts || parsed.accounts.length === 0)) {
-      const accId = "default_mf";
-      parsed.accounts = [{
-        id: accId,
-        type: "miniflux",
-        name: "Miniflux",
-        url: parsed.minifluxUrl,
-        token: parsed.minifluxToken,
-        maxItems: parsed.minifluxMaxItems || 50
-      }];
-      if (parsed.selectedFeeds) {
-        parsed.selectedFeeds.forEach(f => {
-          f.accountId = accId;
-          f.rawId = f.id;
-          f.id = makeUid(accId, f.id);
-        });
-      }
-      delete parsed.minifluxUrl; delete parsed.minifluxToken; delete parsed.minifluxMaxItems;
-    }
-
-    // Migration for moving from a single hardcoded Wallabag config to the
-    // multi-account readItLaterAccounts array (Wallabag + Readeck, etc.)
-    if(parsed.wallabagUrl && (!parsed.readItLaterAccounts || parsed.readItLaterAccounts.length === 0)) {
-      parsed.readItLaterAccounts = [{
-        id: "default_wb",
-        type: "wallabag",
-        name: "Wallabag",
-        url: parsed.wallabagUrl,
-        clientId: parsed.wallabagClientId,
-        clientSecret: parsed.wallabagClientSecret,
-        username: parsed.wallabagUsername,
-        password: parsed.wallabagPassword,
-        accessToken: parsed.wallabagAccessToken || null,
-        refreshToken: parsed.wallabagRefreshToken || null,
-        tokenExpiry: parsed.wallabagTokenExpiry || 0
-      }];
-    }
-    delete parsed.wallabagUrl; delete parsed.wallabagClientId; delete parsed.wallabagClientSecret;
-    delete parsed.wallabagUsername; delete parsed.wallabagPassword; delete parsed.wallabagAccessToken;
-    delete parsed.wallabagRefreshToken; delete parsed.wallabagTokenExpiry;
-
-    // Migration: hideEmptyFeeds used to be one global flag; now it's a
-    // per-account setting. If the old global flag was on, carry that
-    // forward as each account's starting value rather than silently
-    // resetting everyone to "off".
-    if(parsed.hideEmptyFeeds === true && parsed.accounts){
-      parsed.accounts.forEach(acc=>{
-        if(acc.hideEmptyFeeds === undefined) acc.hideEmptyFeeds = true;
-      });
-    }
 
     return Object.assign({}, DEFAULT_CFG, parsed);
   }catch(e){ return Object.assign({}, DEFAULT_CFG); }
