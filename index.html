@@ -809,7 +809,7 @@ fieldset legend {
         <div id="security-body" class="collapsible-body">
         <div class="row between">
           <label style="margin:0;">Password protect this app</label>
-          <input id="cfg-encrypt-credentials" type="checkbox">
+          <input id="cfg-password-protect" type="checkbox">
         </div>
         <p class="muted" style="font-size:11px; margin:.4em 0 0;">
           Requires a password to open NRP at all — the entire stored configuration (accounts,
@@ -835,7 +835,7 @@ fieldset legend {
           default.
         </p>
         <div class="row wrap" style="margin-top:.8em; gap:.4em;">
-          <button type="button" id="btn-change-passphrase" class="grow hidden">Change password</button>
+          <button type="button" id="btn-change-password" class="grow hidden">Change password</button>
         </div>
         </div>
       </fieldset>
@@ -933,7 +933,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.91"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.92"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -991,9 +991,9 @@ let credentialKey = null; // derived AES-GCM CryptoKey, cached in memory for the
 function bytesToBase64(bytes){ return btoa(String.fromCharCode(...bytes)); }
 function base64ToBytes(b64){ return Uint8Array.from(atob(b64), c=>c.charCodeAt(0)); }
 
-async function deriveKeyFromPassphrase(passphrase, saltB64){
+async function deriveKeyFromPassword(password, saltB64){
   const salt = saltB64 ? base64ToBytes(saltB64) : crypto.getRandomValues(new Uint8Array(16));
-  const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), {name:"PBKDF2"}, false, ["deriveKey"]);
+  const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), {name:"PBKDF2"}, false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
     {name:"PBKDF2", salt, iterations:PBKDF2_ITERATIONS, hash:"SHA-256"},
     keyMaterial, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]
@@ -1029,7 +1029,7 @@ async function decryptWholeConfig(wrapper, key){
   const plaintext = await decryptString(key, wrapper);
   return JSON.parse(plaintext);
 }
-function isWeakPassphrase(p){ return !p || p.length < 8; }
+function isWeakPassword(p){ return !p || p.length < 8; }
 
 function loadConfig(){
   try{
@@ -3056,15 +3056,12 @@ setupCollapsibleSection("cache", "cache-legend", "cache-body");
 setupCollapsibleSection("logging", "logging-legend", "logging-body");
 setupCollapsibleSection("exportimport", "exportimport-legend", "exportimport-body");
 
-// Called early in init(), before anything that needs real account
-// credentials (sync, API calls) runs. If encryption is on, prompts for the
-// passphrase (up to 3 attempts) and decrypts every account's credential
-// fields in place on the live CFG object — every other part of the app
-// keeps reading account.token/.password/etc. exactly as it always has,
-// with zero awareness this happened. Returns false (locked) if the user
-// cancels or fails all attempts; accounts needing those credentials just
-// won't be able to sync until unlocked from Settings.
-const SESSION_KEY_STORAGE = "nrp_session_credential_key";
+// Session-scoped key caching, so "stay unlocked for this browser session"
+// (see completeInit()/checkLockState() below) doesn't mean re-entering the
+// password on every reload — sessionStorage rather than localStorage,
+// since it's cleared when the tab/browser genuinely closes rather than
+// persisting indefinitely, plus its own explicit expiry regardless.
+const SESSION_KEY_STORAGE = "nrp_session_password_key";
 const SESSION_KEY_MAX_AGE_MS = 60 * 60 * 1000; // re-derivation required after this regardless of sessionStorage surviving
 async function cacheKeyForSession(key){
   if(!CFG.staySignedInSession) return;
@@ -3092,13 +3089,13 @@ function clearCachedSessionKey(){
 async function enablePasswordProtection(){
   const p1 = prompt("Set a password to protect this app:");
   if(p1 === null || !p1){ toast("Cancelled"); return; }
-  if(isWeakPassphrase(p1) && !confirm("This password is short and may be easy to guess. Use it anyway?")){
+  if(isWeakPassword(p1) && !confirm("This password is short and may be easy to guess. Use it anyway?")){
     toast("Cancelled"); return;
   }
   const p2 = prompt("Confirm password:");
   if(p1 !== p2){ toast("Passwords didn't match"); return; }
   try{
-    const {key, saltB64} = await deriveKeyFromPassphrase(p1, null);
+    const {key, saltB64} = await deriveKeyFromPassword(p1, null);
     credentialKey = key;
     CFG.pwSalt = saltB64;
     CFG.passwordProtected = true;
@@ -3127,13 +3124,13 @@ function disablePasswordProtection(){
 async function changeAppPassword(){
   const p1 = prompt("New password:");
   if(p1 === null || !p1){ toast("Cancelled"); return; }
-  if(isWeakPassphrase(p1) && !confirm("This password is short and may be easy to guess. Use it anyway?")){
+  if(isWeakPassword(p1) && !confirm("This password is short and may be easy to guess. Use it anyway?")){
     toast("Cancelled"); return;
   }
   const p2 = prompt("Confirm new password:");
   if(p1 !== p2){ toast("Passwords didn't match"); return; }
   try{
-    const {key, saltB64} = await deriveKeyFromPassphrase(p1, null);
+    const {key, saltB64} = await deriveKeyFromPassword(p1, null);
     credentialKey = key;
     CFG.pwSalt = saltB64;
     saveConfig(CFG);
@@ -3145,18 +3142,18 @@ async function changeAppPassword(){
 }
 
 function populateSecuritySection(){
-  $("#cfg-encrypt-credentials").checked = !!CFG.passwordProtected;
+  $("#cfg-password-protect").checked = !!CFG.passwordProtected;
   $("#cfg-stay-signed-in").checked = !!CFG.staySignedInSession;
-  $("#btn-change-passphrase").classList.toggle("hidden", !CFG.passwordProtected);
+  $("#btn-change-password").classList.toggle("hidden", !CFG.passwordProtected);
 }
 
-$("#cfg-encrypt-credentials").addEventListener("change", async (e)=>{
+$("#cfg-password-protect").addEventListener("change", async (e)=>{
   const wantsProtection = e.target.checked;
   e.target.checked = !!CFG.passwordProtected; // revert visually until the async flow actually confirms
   if(wantsProtection) await enablePasswordProtection();
   else disablePasswordProtection();
 });
-$("#btn-change-passphrase").addEventListener("click", changeAppPassword);
+$("#btn-change-password").addEventListener("click", changeAppPassword);
 $("#cfg-stay-signed-in").addEventListener("change", (e)=>{
   CFG.staySignedInSession = e.target.checked;
   saveConfig(CFG);
@@ -4073,7 +4070,7 @@ async function decryptImportedConfigIfPossible(wrapper){
       : "Incorrect password. Try again:");
     if(password === null){ toast("Import cancelled"); return null; }
     try{
-      const {key} = await deriveKeyFromPassphrase(password, wrapper.salt);
+      const {key} = await deriveKeyFromPassword(password, wrapper.salt);
       return await decryptWholeConfig(wrapper, key);
     }catch(e){ /* wrong password — loop and retry */ }
   }
@@ -5419,7 +5416,7 @@ async function attemptUnlock(){
   errEl.classList.add("hidden");
   if(!password) return;
   try{
-    const {key} = await deriveKeyFromPassphrase(password, CFG.salt);
+    const {key} = await deriveKeyFromPassword(password, CFG.salt);
     const decrypted = await decryptWholeConfig(CFG, key);
     CFG = Object.assign({}, DEFAULT_CFG, decrypted);
     credentialKey = key;
