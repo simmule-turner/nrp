@@ -47,7 +47,9 @@ const FUNCTIONS = [
   "deriveKeyFromPassphrase",
   "encryptString",
   "decryptString",
-  "isEncryptedBlob"
+  "encryptWholeConfig",
+  "decryptWholeConfig",
+  "isWeakPassphrase"
 ];
 const CONSTANTS = ["PBKDF2_ITERATIONS"];
 
@@ -218,7 +220,7 @@ test("selectEntriesToPurge: empty candidate list always returns empty, regardles
 test("encryption: round-trip returns the original plaintext", async () => {
   const { key } = await lib.deriveKeyFromPassphrase("correct horse battery staple", null);
   const blob = await lib.encryptString(key, "super-secret-api-token-123");
-  assert.equal(lib.isEncryptedBlob(blob), true);
+  assert.ok(blob.iv && blob.data, "encryptString should return an {iv, data} blob");
   const plaintext = await lib.decryptString(key, blob);
   assert.equal(plaintext, "super-secret-api-token-123");
 });
@@ -251,12 +253,31 @@ test("encryption: two encryptions of the same plaintext never produce identical 
   assert.notEqual(a.data, b.data);
 });
 
-test("encryption: isEncryptedBlob correctly distinguishes blobs from plain strings", () => {
-  assert.equal(lib.isEncryptedBlob({ __enc: true, iv: "x", data: "y" }), true);
-  assert.ok(!lib.isEncryptedBlob("a plain token string"));
-  assert.ok(!lib.isEncryptedBlob(null));
-  assert.ok(!lib.isEncryptedBlob(undefined));
-  assert.ok(!lib.isEncryptedBlob({}));
+test("encryptWholeConfig/decryptWholeConfig: round-trips an arbitrary config object", async () => {
+  const { key, saltB64 } = await lib.deriveKeyFromPassphrase("app password", null);
+  const cfg = { accounts: [{ id: "a1", type: "miniflux", token: "secret-token" }], theme: "dark" };
+  const wrapper = await lib.encryptWholeConfig(cfg, key, saltB64);
+  assert.equal(wrapper.__locked, true);
+  assert.equal(wrapper.salt, saltB64, "salt must be readable without decrypting — it's how the key gets derived in the first place");
+  const decrypted = await lib.decryptWholeConfig(wrapper, key);
+  assert.deepEqual(decrypted, cfg);
+});
+
+test("encryptWholeConfig: wrong password fails to decrypt", async () => {
+  const right = await lib.deriveKeyFromPassphrase("right password", null);
+  const wrapper = await lib.encryptWholeConfig({ hello: "world" }, right.key, right.saltB64);
+  const wrong = await lib.deriveKeyFromPassphrase("wrong password", right.saltB64);
+  await assert.rejects(() => lib.decryptWholeConfig(wrapper, wrong.key));
+});
+
+test("isWeakPassphrase: flags short or empty passwords, accepts longer ones", () => {
+  assert.equal(lib.isWeakPassphrase(""), true);
+  assert.equal(lib.isWeakPassphrase(null), true);
+  assert.equal(lib.isWeakPassphrase(undefined), true);
+  assert.equal(lib.isWeakPassphrase("short"), true);
+  assert.equal(lib.isWeakPassphrase("a".repeat(7)), true);
+  assert.equal(lib.isWeakPassphrase("a".repeat(8)), false);
+  assert.equal(lib.isWeakPassphrase("a reasonably long passphrase"), false);
 });
 
 test("base64 round-trip preserves arbitrary bytes", () => {
