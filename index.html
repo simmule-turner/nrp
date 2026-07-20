@@ -154,6 +154,7 @@ try{
     color:var(--muted); background:var(--raised); border-top:1px solid var(--border);
     border-bottom:1px solid var(--border); font-weight:700;
     -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
+    touch-action:pan-y;
   }
   .feed-folder-header:active{ background:color-mix(in srgb, var(--fg) 8%, transparent); }
   .feed-folder-header .chevron{
@@ -933,7 +934,7 @@ function endBgTask() {
 }
 
 /* ============================= CONFIG ============================= */
-const APP_VERSION = "0.0.92"; // bump this manually on meaningful changes
+const APP_VERSION = "0.0.93"; // bump this manually on meaningful changes
 // Every entry, feed, and picker-choice id in the app is this same composite
 // key: an account id, a fixed separator, and that account's own raw id for
 // the thing. Was previously built as a raw string concatenation independently
@@ -4759,7 +4760,6 @@ $("#feed-sort-dir").addEventListener("click", ()=>{
   });
 })();
 
-/* ============================= ARTICLE LIST SCREEN ============================= */
 /* ============================= ARTICLE LIST SCREEN ============================= */
 let currentFeedUid = null;
 let currentFolderName = null;
