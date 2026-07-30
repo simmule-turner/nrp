@@ -1,6 +1,8 @@
 "use strict";
 /* NRP service worker.
-   Only responsibility: make the app shell (index.html) available offline.
+   Only responsibility: make the app shell (index.html and its two icon
+   files, which live as sibling PNGs rather than embedded in index.html)
+   available offline.
    All Miniflux / NewsBlur / Wallabag / Readeck / image traffic is
    cross-origin and is deliberately left untouched here -- it's handled by
    the app's own IndexedDB cache, not by this file. */
@@ -13,9 +15,9 @@
 // successfully populated -- so a partial/failed cache.addAll() can never
 // leave clients with a mix of old and new shell files under one name, the
 // way overwriting a single fixed cache name in place could.
-const SW_VERSION = "14";
+const SW_VERSION = "15";
 const CACHE_NAME = `nrp-shell-v${SW_VERSION}`;
-const SHELL_URLS = ["./", "./index.html"];
+const SHELL_URLS = ["./", "./index.html", "./icons/icon-192.png", "./icons/icon-512.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(
