@@ -1144,6 +1144,26 @@ function buildHeadersFromList(list){
   (list||[]).forEach(h=>{ if(h && h.key) obj[h.key] = h.value || ""; });
   return obj;
 }
+// Validates a base URL a user has typed into an account/proxy field, using
+// the browser's own URL parser rather than a hand-rolled regex — this is
+// what makes an optional port (e.g. http://example.com:8088) "just work":
+// the URL constructor parses scheme, host, and port together, so nothing
+// here needs to special-case ports at all. Returns a normalized string
+// (protocol + host[:port] + pathname, trailing slashes removed) or throws
+// with a human-readable reason on anything unparseable.
+function normalizeBaseUrl(raw){
+  const trimmed = (raw||"").trim();
+  if(!trimmed) throw new Error("URL is required");
+  let u;
+  try{ u = new URL(trimmed); }
+  catch(e){ throw new Error("Not a valid URL (include http:// or https://)"); }
+  if(u.protocol !== "http:" && u.protocol !== "https:"){
+    throw new Error("URL must start with http:// or https://");
+  }
+  // u.host already includes ":port" whenever a non-default port was given
+  // — e.g. "example.com:8088" — so a port survives normalization for free.
+  return (u.protocol + "//" + u.host + u.pathname).replace(/\/+$/,"");
+}
 // Returns {url, opts}. opts.headers is augmented (never replaced), so headers
 // already set by the caller survive alongside any proxy headers.
 function applyProxy(account, type, url, opts){
@@ -3347,16 +3367,29 @@ $("#btn-save-account").addEventListener("click", async () => {
   const isNewAccount = !$("#acc-form-id").value;
   const type = $("#acc-type").value;
   const existing = CFG.accounts.find(a => a.id === id) || {};
+  let normalizedUrl = "";
+  if(type !== "local"){
+    try{ normalizedUrl = normalizeBaseUrl($("#acc-url").value); }
+    catch(e){ toast("Server URL: " + e.message); return; }
+  }
   const acc = {
     id: id,
     type: type,
     name: $("#acc-name").value.trim() || type,
-    url: type === "local" ? "" : $("#acc-url").value.trim(),
+    url: normalizedUrl,
     maxItems: parseInt($("#acc-max").value, 10) || 50,
     hideEmptyFeeds: $("#acc-hide-empty-feeds").checked,
     ...readProxyFields("acc-api-proxy", "api"),
     ...readProxyFields("acc-nonapi-proxy", "nonApi")
   };
+  if(acc.apiProxyEnabled && acc.apiProxyUrl){
+    try{ acc.apiProxyUrl = normalizeBaseUrl(acc.apiProxyUrl) + "/"; }
+    catch(e){ toast("API Proxy URL: " + e.message); return; }
+  }
+  if(acc.nonApiProxyEnabled && acc.nonApiProxyUrl){
+    try{ acc.nonApiProxyUrl = normalizeBaseUrl(acc.nonApiProxyUrl) + "/"; }
+    catch(e){ toast("Image Proxy URL: " + e.message); return; }
+  }
   if(acc.type === "miniflux") { acc.token = $("#acc-token").value.trim(); }
   if(acc.type === "newsblur" && (!acc.apiProxyEnabled || !acc.apiProxyUrl)){
     toast("NewsBlur accounts require the API Proxy to be enabled with a URL");
@@ -3508,8 +3541,9 @@ $("#btn-save-rl-account").addEventListener("click", () => {
   const id = $("#rl-form-id").value || ("rl_" + Date.now());
   const type = $("#rl-type").value;
   const existing = (CFG.readItLaterAccounts||[]).find(a => a.id === id) || {};
-  const url = $("#rl-url").value.trim();
-  if(!url){ toast("Base URL is required"); return; }
+  let url;
+  try{ url = normalizeBaseUrl($("#rl-url").value); }
+  catch(e){ toast("Base URL: " + e.message); return; }
 
   const acc = {
     id: id,
@@ -3533,6 +3567,11 @@ $("#btn-save-rl-account").addEventListener("click", () => {
 
   CFG.readItLaterAccounts = CFG.readItLaterAccounts || [];
   const existingIdx = CFG.readItLaterAccounts.findIndex(a => a.id === id);
+
+  if(acc.apiProxyEnabled && acc.apiProxyUrl){
+    try{ acc.apiProxyUrl = normalizeBaseUrl(acc.apiProxyUrl) + "/"; }
+    catch(e){ toast("API Proxy URL: " + e.message); return; }
+  }
   if(existingIdx >= 0) CFG.readItLaterAccounts[existingIdx] = acc;
   else CFG.readItLaterAccounts.push(acc);
 
@@ -3769,8 +3808,9 @@ $("#btn-deselect-all").addEventListener("click", () => {
 function genLocalFeedId(){ return "lf_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 async function addLocalFeedToAccount(account){
-  const url = $("#local-feed-url").value.trim();
-  if(!url){ toast("Enter a feed URL"); return; }
+  let url;
+  try{ url = normalizeBaseUrl($("#local-feed-url").value); }
+  catch(e){ toast("Feed URL: " + e.message); return; }
   toast("Fetching feed\u2026");
   startBgTask();
   try{
