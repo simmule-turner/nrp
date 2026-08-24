@@ -1573,7 +1573,16 @@ async function fetchWithTimeout(url, opts, timeoutMs){
     // here means every current and future caller gets it automatically.
     return await fetch(url, Object.assign({referrerPolicy:"no-referrer"}, opts, {signal: controller.signal}));
   }catch(e){
-    rlLog(`XX: "${url}"`);
+    // Extract detailed exception info
+    const errorDetails = {
+      name: e.name,             // e.g., 'AbortError', 'TypeError'
+      message: e.message,       // Detailed error description
+      code: e.code || 'N/A',    // Numeric/string error code if available (e.g., node/system errors)
+      status: e.status || 'N/A' // HTTP status code if manually thrown or attached
+    };
+    // Log the comprehensive details using your rlLog function
+    rlLog(`XX: "${url}" | Error: [${errorDetails.name}] ${errorDetails.message} | Code/Status: ${errorDetails.code || errorDetails.status}`);
+
     if(timedOut){
       const err = new Error(`request timed out after ${timeoutMs/1000}s`);
       err.name = "TimeoutError";
