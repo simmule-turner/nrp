@@ -1573,6 +1573,7 @@ async function fetchWithTimeout(url, opts, timeoutMs){
     // here means every current and future caller gets it automatically.
     return await fetch(url, Object.assign({referrerPolicy:"no-referrer"}, opts, {signal: controller.signal}));
   }catch(e){
+    rlLog(`XX: "${url}"`);
     if(timedOut){
       const err = new Error(`request timed out after ${timeoutMs/1000}s`);
       err.name = "TimeoutError";
