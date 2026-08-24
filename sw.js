@@ -15,7 +15,7 @@
 // successfully populated -- so a partial/failed cache.addAll() can never
 // leave clients with a mix of old and new shell files under one name, the
 // way overwriting a single fixed cache name in place could.
-const SW_VERSION = "16";
+const SW_VERSION = "17";
 const CACHE_NAME = `nrp-shell-v${SW_VERSION}`;
 const SHELL_URLS = ["./", "./index.html", "./icons/icon-192.png", "./icons/icon-512.png"];
 
